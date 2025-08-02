@@ -292,50 +292,139 @@ backend/
 
 ### Database Design
 
-#### Entity Relationship Diagram
+#### Entity Relationship Diagram with Chunking Support
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Documents     │    │   Tax Rules     │    │  Tax Brackets   │
+│   Documents     │    │ Document Chunks │    │   Tax Rules     │
 ├─────────────────┤    ├─────────────────┤    ├─────────────────┤
 │ id (PK)         │    │ id (PK)         │    │ id (PK)         │
-│ filename        │    │ rule_type       │    │ rule_id (FK)    │
-│ file_path       │◄──►│ title           │◄──►│ min_income      │
-│ content_type    │    │ description     │    │ max_income      │
-│ upload_date     │    │ rule_data       │    │ tax_rate        │
-│ processed       │    │ effective_date  │    │ fixed_amount    │
-│ status          │    │ document_id(FK) │    │ bracket_order   │
+│ filename        │◄──►│ document_id(FK) │◄──►│ chunk_id (FK)   │
+│ file_path       │    │ chunk_sequence  │    │ rule_type       │
+│ content_type    │    │ start_position  │    │ title           │
+│ upload_date     │    │ end_position    │    │ description     │
+│ processed       │    │ chunk_text      │    │ rule_data       │
+│ status          │    │ chunk_size      │    │ embedding(768)  │
+│ total_chunks    │    │ processing_stat │    │ effective_date  │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          ▼                       ▼                       ▼
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│ Form Schemas    │    │  Calculations   │    │     Users       │
+│  Tax Brackets   │    │ Form Schemas    │    │  Calculations   │
 ├─────────────────┤    ├─────────────────┤    ├─────────────────┤
 │ id (PK)         │    │ id (PK)         │    │ id (PK)         │
-│ schema_type     │    │ user_id (FK)    │    │ username        │
-│ version         │    │ input_data      │    │ email           │
-│ schema_data     │    │ result_data     │    │ role            │
-│ is_active       │    │ tax_amount      │    │ created_at      │
-│ created_at      │    │ created_at      │    │ last_login      │
+│ rule_id (FK)    │    │ schema_type     │    │ user_id (FK)    │
+│ min_income      │    │ version         │    │ input_data      │
+│ max_income      │    │ schema_data     │    │ result_data     │
+│ tax_rate        │    │ is_active       │    │ tax_amount      │
+│ fixed_amount    │    │ chunk_sources   │    │ created_at      │
+│ bracket_order   │    │ created_at      │    │ chunk_refs      │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
-#### Data Storage Strategy
+#### Chunking Data Model
+
+**Core Chunking Tables:**
+
+```sql
+-- Document chunks table for managing document segmentation
+CREATE TABLE document_chunks (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
+    chunk_sequence INTEGER NOT NULL,
+    start_position INTEGER,
+    end_position INTEGER,
+    chunk_text TEXT NOT NULL,
+    chunk_size INTEGER,
+    chunk_type VARCHAR(50) DEFAULT 'content', -- 'content', 'table', 'header'
+    overlap_with_previous INTEGER DEFAULT 0,
+    overlap_with_next INTEGER DEFAULT 0,
+    processing_status VARCHAR(50) DEFAULT 'pending',
+    gemini_tokens_used INTEGER,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    processed_at TIMESTAMP,
+    
+    -- Ensure unique sequence per document
+    UNIQUE(document_id, chunk_sequence)
+);
+
+-- Enhanced tax_rules table with chunk references
+ALTER TABLE tax_rules ADD COLUMN chunk_id INTEGER REFERENCES document_chunks(id);
+ALTER TABLE tax_rules ADD COLUMN chunk_sequence INTEGER;
+ALTER TABLE tax_rules ADD COLUMN chunk_confidence DECIMAL(3,2); -- 0.00-1.00
+ALTER TABLE tax_rules ADD COLUMN extraction_context TEXT; -- Surrounding text context
+
+-- Indexing for chunk-based queries
+CREATE INDEX idx_chunks_document_sequence ON document_chunks(document_id, chunk_sequence);
+CREATE INDEX idx_chunks_processing_status ON document_chunks(processing_status);
+CREATE INDEX idx_tax_rules_chunk ON tax_rules(chunk_id);
+CREATE INDEX idx_chunks_type ON document_chunks(chunk_type);
+```
+
+**Chunk Processing Metadata:**
+
+```sql
+-- Chunk processing analytics
+CREATE TABLE chunk_processing_stats (
+    id SERIAL PRIMARY KEY,
+    chunk_id INTEGER REFERENCES document_chunks(id),
+    processing_start_time TIMESTAMP,
+    processing_end_time TIMESTAMP,
+    gemini_api_calls INTEGER DEFAULT 0,
+    rules_extracted INTEGER DEFAULT 0,
+    processing_errors INTEGER DEFAULT 0,
+    quality_score DECIMAL(3,2), -- Overall chunk processing quality
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### Data Storage Strategy with Chunking
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Storage Layer                              │
 ├─────────────────────────────────────────────────────────────────┤
-│  Structured Data    │  Unstructured     │  Vector Data         │
-│  (Supabase)         │  (Supabase        │  (pgvector extension)│
-│                     │   Storage)        │                      │
+│  Structured Data    │  Chunk Data       │  Vector Data         │
+│  (Supabase)         │  (Supabase)       │  (pgvector extension)│
+│                     │                   │                      │
 ├─────────────────────────────────────────────────────────────────┤
-│ • Tax Rules         │ • PDF Documents   │ • Rule Embeddings    │
-│ • Tax Brackets      │ • Word Files      │ • Semantic Vectors   │
-│ • User Data         │ • Images          │ • Search Indices     │
-│ • Calculations      │ • Attachments     │ • Similarity Scores  │
-│ • Form Schemas      │ • Backup Files    │ • Query Vectors      │
-│ • Audit Logs        │ • Temp Files      │ • Context Embeddings │
+│ • Tax Rules         │ • Document Chunks │ • Per-Chunk Embeds   │
+│ • Tax Brackets      │ • Chunk Metadata  │ • Semantic Vectors   │
+│ • User Data         │ • Processing Stats│ • Search Indices     │
+│ • Calculations      │ • Chunk Relations │ • Similarity Scores  │
+│ • Form Schemas      │ • Overlap Data    │ • Query Vectors      │
+│ • Audit Logs        │ • Error Tracking  │ • Context Embeddings │
+├─────────────────────────────────────────────────────────────────┤
+│  Unstructured Data  │  Chunk Processing │  Performance Layer   │
+│  (Supabase Storage) │  Pipeline         │  (Redis Cache)       │
+├─────────────────────────────────────────────────────────────────┤
+│ • Original PDFs     │ • Parallel Proc   │ • Chunk Cache        │
+│ • Word Documents    │ • Error Recovery  │ • Vector Cache       │
+│ • Images/Tables     │ • Progress Track  │ • Processing Queue   │
+│ • Backup Files      │ • Quality Control │ • Session Data       │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+**Chunking Storage Considerations:**
+
+1. **Chunk Size Management**
+   - Original document: Supabase Storage
+   - Processed chunks: PostgreSQL TEXT columns
+   - Large chunks (>8KB): Split into sub-chunks automatically
+
+2. **Vector Storage Optimization**
+   - Individual embeddings per chunk for precise semantic search
+   - Batch embedding generation to optimize Gemini API usage
+   - Hierarchical indexing for document-level and chunk-level searches
+
+3. **Processing State Management**
+   - Chunk processing queue in Redis for parallel processing
+   - Error state tracking for failed chunk processing
+   - Progress indicators for large document processing
+
+4. **Chunk Relationship Preservation**
+   - Overlap data maintains context between chunks
+   - Sequence tracking ensures proper document reconstruction
+   - Cross-chunk rule references for complex tax regulations
 
 ### Caching Strategy
 
@@ -512,35 +601,75 @@ type Subscription {
 
 ### Large Language Model Integration
 
-#### LLM Processing Pipeline
+#### LLM Processing Pipeline with Intelligent Chunking
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Document Processing                           │
 ├─────────────────────────────────────────────────────────────────┤
-│  Document Input  │  Text Extraction │  Content Segmentation     │
-│  - PDF Files     │  - OCR Processing│  - Paragraph Split        │
+│  Document Input  │  Text Extraction │  Intelligent Chunking     │
+│  - PDF Files     │  - OCR Processing│  - Semantic Segmentation  │
 │  - Word Docs     │  - Layout Parser │  - Context Preservation   │
-│  - Text Files    │  - Table Extract │  - Metadata Extraction    │
+│  - Text Files    │  - Table Extract │  - Chunk Metadata Gen     │
 └─────────────┬───────────────────────────────────────────────────┘
               │
-┌─────────────────▼───────────────────────────────────────────────┐
+┌─────────────▼───────────────────────────────────────────────────┐
+│                    Chunking Strategy                            │
+├─────────────────────────────────────────────────────────────────┤
+│  Semantic Chunks │  Fixed-Size      │  Chunk Management         │
+│  - Header-Based  │  - 500-1500 tok  │  - Overlap Strategy       │
+│  - Rule-Based    │  - 200w Overlap  │  - Sequence Tracking      │
+│  - Table Preserv │  - Token Limits  │  - Error Recovery         │
+└─────────────┬───────────────────────────────────────────────────┘
+              │ (Multiple Chunks)
+┌─────────────▼───────────────────────────────────────────────────┐
 │                    LLM Processing (Gemini Free)                 │
 ├─────────────────────────────────────────────────────────────────┤
-│  Rule Extraction │  Structure       │  Validation & QA          │
-│  - Tax Brackets  │  - JSON Schema   │  - Rule Consistency       │
-│  - Deductions    │  - Field Types   │  - Data Validation        │
-│  - Exemptions    │  - Relationships │  - Quality Scoring        │
+│  Per-Chunk Proc │  Structure       │  Validation & QA          │
+│  - Rule Extract  │  - JSON Schema   │  - Rule Consistency       │
+│  - Tax Brackets  │  - Field Types   │  - Data Validation        │
+│  - Deductions    │  - Relationships │  - Quality Scoring        │
 └─────────────┬───────────────────────────────────────────────────┘
               │
 ┌─────────────▼───────────────────────────────────────────────────┐
 │                    Data Storage (Supabase)                     │
 ├─────────────────────────────────────────────────────────────────┤
-│  Structured Data │  Vector Storage  │  Audit Trail              │
-│  - Tax Rules DB  │  - pgvector      │  - Processing Logs        │
-│  - Form Schemas  │  - Embeddings    │  - Version History        │
-│  - Calculations  │  - Search Index  │  - Change Tracking        │
+│  Structured Data │  Vector Storage  │  Chunk Management         │
+│  - Tax Rules DB  │  - pgvector      │  - Chunk Metadata         │
+│  - Form Schemas  │  - Per-Chunk     │  - Processing Status      │
+│  - Calculations  │  - Embeddings    │  - Audit Trail            │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+#### Document Chunking Strategy
+
+**Why Chunking is Essential:**
+- **LLM Token Limitations**: Gemini API has input token limits per request
+- **Semantic Granularity**: Smaller chunks create more precise vector embeddings
+- **Processing Reliability**: Error isolation and parallel processing capabilities
+- **Memory Management**: Prevents memory overflow with large documents
+
+**Optimal Chunk Specifications:**
+- **Size**: 500-1500 tokens (300-1000 words) for Sri Lankan tax documents
+- **Overlap**: 200-word overlap to maintain context boundaries
+- **Structure**: Complete tax rules preserved within chunks
+
+**Chunking Methods for Tax Documents:**
+
+1. **Semantic Chunking** (Primary)
+   - Split by document sections (Chapter, Section, Subsection)
+   - Preserve complete tax rules and tables
+   - Maintain hierarchical document structure
+   - Best for structured government documents
+
+2. **Fixed-Size with Overlap** (Fallback)
+   - 1000-word chunks with 200-word overlap
+   - Ensures no rule is split across boundaries
+   - Simpler implementation for unstructured text
+
+3. **Hybrid Approach** (Recommended)
+   - Semantic splitting where possible
+   - Fixed-size fallback for irregular content
+   - Table and formula preservation logic
 
 ### Vector Database Architecture
 

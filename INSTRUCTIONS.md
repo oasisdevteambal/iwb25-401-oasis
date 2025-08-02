@@ -153,23 +153,188 @@ service /api/documents on new http:Listener(8080) {
     }
     
     resource function post process/[string documentId](http:Caller caller, http:Request req) returns error? {
-        // Parse document text
-        // Segment content for Gemini LLM processing
-        // Extract tax rules using Gemini API
-        // Store structured rules in Supabase
-        // Generate semantic embeddings with pgvector
+        // Parse document text using text_extractor module
+        // Perform intelligent chunking with overlap strategy
+        // Process each chunk through Gemini LLM in parallel
+        // Extract and validate tax rules from chunks
+        // Store structured rules with chunk references in Supabase
+        // Generate per-chunk semantic embeddings with pgvector
+        // Aggregate and validate cross-chunk rule consistency
     }
 }
 ```
 
-**Key Processing Steps:**
-1. File validation and storage
-2. Text extraction (PDF/Word)
-3. Content segmentation
-4. LLM-based rule extraction using Gemini
-5. Data structure validation
-6. Supabase database persistence
-7. pgvector embedding generation and storage
+**Enhanced Processing Pipeline with Intelligent Chunking:**
+
+1. **File validation and storage** (Supabase Storage)
+2. **Text extraction** (PDF/Word parsing with layout preservation)
+3. **Intelligent chunking** (Semantic segmentation with context overlap)
+4. **Parallel chunk processing** (Multiple Gemini API calls)
+5. **LLM-based rule extraction** (Per-chunk rule identification)
+6. **Data structure validation** (Cross-chunk consistency checks)
+7. **Supabase database persistence** (With chunk metadata and references)
+8. **Per-chunk embedding generation** (pgvector for semantic search)
+9. **Quality assurance** (Rule validation and error handling)
+
+### 1.1. Document Chunking Implementation
+
+**Chunking Strategy for Sri Lankan Tax Documents:**
+
+```ballerina
+// text_extractor.bal - Intelligent chunking implementation
+import ballerina/log;
+import ballerina/regex;
+
+type ChunkConfig record {
+    int maxTokens = 1500;
+    int minTokens = 500;
+    int overlapWords = 200;
+    string chunkType = "semantic"; // "semantic", "fixed", "hybrid"
+};
+
+type DocumentChunk record {
+    string id;
+    int sequence;
+    string text;
+    int startPosition;
+    int endPosition;
+    string chunkType; // "header", "content", "table", "formula"
+    int tokenCount;
+    string[] contextKeywords;
+    decimal confidence;
+};
+
+// Main chunking function for tax documents
+function chunkTaxDocument(string documentText, string documentId) returns DocumentChunk[]|error {
+    ChunkConfig config = {maxTokens: 1500, overlapWords: 200};
+    
+    // Step 1: Identify document structure (headers, sections, tables)
+    DocumentStructure structure = check analyzeDocumentStructure(documentText);
+    
+    // Step 2: Apply semantic chunking based on tax document patterns
+    DocumentChunk[] chunks = check performSemanticChunking(documentText, structure, config);
+    
+    // Step 3: Validate chunk quality and apply overlap strategy
+    DocumentChunk[] validatedChunks = check validateAndOverlapChunks(chunks, config);
+    
+    // Step 4: Generate chunk metadata and store in database
+    check storeChunkMetadata(validatedChunks, documentId);
+    
+    return validatedChunks;
+}
+
+// Semantic chunking specifically designed for Sri Lankan tax documents
+function performSemanticChunking(string text, DocumentStructure structure, ChunkConfig config) 
+    returns DocumentChunk[]|error {
+    
+    DocumentChunk[] chunks = [];
+    
+    // Identify tax-specific patterns
+    string[] patterns = [
+        "Income Tax", "VAT", "PAYE", "Withholding Tax", "NBT", "SSCL",
+        "Tax Brackets", "Deductions", "Exemptions", "Rates", "Thresholds"
+    ];
+    
+    // Split by major sections while preserving complete tax rules
+    foreach var section in structure.sections {
+        if (section.text.length() > config.maxTokens * 4) {
+            // Large section - split by subsections or paragraphs
+            DocumentChunk[] sectionChunks = check splitLargeSection(section, config);
+            chunks.push(...sectionChunks);
+        } else {
+            // Section fits in single chunk
+            chunks.push(createChunkFromSection(section));
+        }
+    }
+    
+    return chunks;
+}
+
+// Overlap strategy to maintain context between chunks
+function validateAndOverlapChunks(DocumentChunk[] chunks, ChunkConfig config) 
+    returns DocumentChunk[]|error {
+    
+    DocumentChunk[] processedChunks = [];
+    
+    foreach int i in 0..<chunks.length() {
+        DocumentChunk chunk = chunks[i];
+        
+        // Add overlap from previous chunk
+        if (i > 0) {
+            string previousOverlap = extractOverlapText(chunks[i-1], config.overlapWords);
+            chunk.text = previousOverlap + "\n\n" + chunk.text;
+        }
+        
+        // Add overlap for next chunk
+        if (i < chunks.length() - 1) {
+            string nextOverlap = extractOverlapText(chunk, config.overlapWords);
+            // Next chunk will include this overlap
+        }
+        
+        processedChunks.push(chunk);
+    }
+    
+    return processedChunks;
+}
+```
+
+**Chunk Processing Pipeline:**
+
+```ballerina
+// Parallel chunk processing with Gemini API
+function processChunksInParallel(DocumentChunk[] chunks, string documentId) returns error? {
+    
+    // Process chunks in batches to respect API rate limits
+    int batchSize = 3; // Process 3 chunks simultaneously
+    
+    foreach int batchStart in 0..<chunks.length() by batchSize {
+        DocumentChunk[] batch = chunks.slice(batchStart, batchStart + batchSize);
+        
+        // Create parallel workers for each chunk in batch
+        worker[] workers = [];
+        
+        foreach var chunk in batch {
+            worker chunkWorker = start processChunkWithLLM(chunk, documentId);
+            workers.push(chunkWorker);
+        }
+        
+        // Wait for all workers to complete
+        foreach var worker in workers {
+            check wait worker;
+        }
+        
+        // Small delay between batches for API rate limiting
+        check waitForSeconds(2);
+    }
+}
+
+function processChunkWithLLM(DocumentChunk chunk, string documentId) returns error? {
+    log:printInfo("Processing chunk " + chunk.sequence.toString() + " for document " + documentId);
+    
+    try {
+        // Call Gemini API for rule extraction
+        TaxRule[] extractedRules = check extractRulesFromChunk(chunk);
+        
+        // Generate embeddings for the chunk
+        float[] embedding = check generateChunkEmbedding(chunk.text);
+        
+        // Store rules with chunk references
+        foreach var rule in extractedRules {
+            rule.chunkId = chunk.id;
+            rule.chunkSequence = chunk.sequence;
+            rule.embedding = embedding;
+            check storeRuleInSupabase(rule);
+        }
+        
+        // Update chunk processing status
+        check updateChunkStatus(chunk.id, "completed", extractedRules.length());
+        
+    } on fail error e {
+        log:printError("Failed to process chunk " + chunk.id + ": " + e.message());
+        check updateChunkStatus(chunk.id, "failed", 0, e.message());
+    }
+}
+```
 
 ### 2. Tax Rule Management
 
@@ -178,7 +343,31 @@ service /api/documents on new http:Listener(8080) {
 -- Enable vector extension
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- Tax rules table
+-- Document chunks table for intelligent document segmentation
+CREATE TABLE document_chunks (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
+    chunk_sequence INTEGER NOT NULL,
+    start_position INTEGER,
+    end_position INTEGER,
+    chunk_text TEXT NOT NULL,
+    chunk_size INTEGER,
+    chunk_type VARCHAR(50) DEFAULT 'content', -- 'content', 'table', 'header', 'formula'
+    overlap_with_previous INTEGER DEFAULT 0,
+    overlap_with_next INTEGER DEFAULT 0,
+    processing_status VARCHAR(50) DEFAULT 'pending', -- 'pending', 'processing', 'completed', 'failed'
+    gemini_tokens_used INTEGER,
+    error_message TEXT,
+    context_keywords TEXT[], -- Tax-related keywords found in chunk
+    confidence_score DECIMAL(3,2), -- Processing confidence 0.00-1.00
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    processed_at TIMESTAMP,
+    
+    -- Ensure unique sequence per document
+    UNIQUE(document_id, chunk_sequence)
+);
+
+-- Enhanced tax rules table with chunk tracking
 CREATE TABLE tax_rules (
     id SERIAL PRIMARY KEY,
     rule_type VARCHAR(50) NOT NULL, -- 'income_tax', 'vat', 'paye', etc.
@@ -186,16 +375,37 @@ CREATE TABLE tax_rules (
     title VARCHAR(255) NOT NULL,
     description TEXT,
     rule_data JSONB NOT NULL, -- Structured rule definition
-    embedding vector(768), -- Gemini embeddings
+    embedding vector(768), -- Gemini embeddings per chunk
     effective_date DATE NOT NULL,
     expiry_date DATE,
-    document_source_id INTEGER,
+    document_source_id INTEGER REFERENCES documents(id),
+    chunk_id INTEGER REFERENCES document_chunks(id), -- Source chunk reference
+    chunk_sequence INTEGER, -- Position within document
+    chunk_confidence DECIMAL(3,2), -- Extraction confidence
+    extraction_context TEXT, -- Surrounding text context
+    cross_chunk_refs INTEGER[], -- References to related chunks
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Chunk processing analytics for monitoring
+CREATE TABLE chunk_processing_stats (
+    id SERIAL PRIMARY KEY,
+    chunk_id INTEGER REFERENCES document_chunks(id),
+    processing_start_time TIMESTAMP,
+    processing_end_time TIMESTAMP,
+    gemini_api_calls INTEGER DEFAULT 0,
+    rules_extracted INTEGER DEFAULT 0,
+    processing_errors INTEGER DEFAULT 0,
+    quality_score DECIMAL(3,2), -- Overall chunk processing quality
+    retry_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Enable Row Level Security
 ALTER TABLE tax_rules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE document_chunks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE chunk_processing_stats ENABLE ROW LEVEL SECURITY;
 
 -- Tax brackets table
 CREATE TABLE tax_brackets (
@@ -221,9 +431,29 @@ CREATE TABLE form_schemas (
 -- Enable RLS for form schemas
 ALTER TABLE form_schemas ENABLE ROW LEVEL SECURITY;
 
--- Create index for vector similarity search
+-- Comprehensive indexing strategy for chunking and vector search
+-- Vector similarity search index
 CREATE INDEX ON tax_rules USING ivfflat (embedding vector_cosine_ops)
 WITH (lists = 100);
+
+-- Chunk-specific indexes for efficient querying
+CREATE INDEX idx_chunks_document_sequence ON document_chunks(document_id, chunk_sequence);
+CREATE INDEX idx_chunks_processing_status ON document_chunks(processing_status);
+CREATE INDEX idx_chunks_type ON document_chunks(chunk_type);
+CREATE INDEX idx_chunks_keywords ON document_chunks USING GIN(context_keywords);
+
+-- Tax rules chunk relationship indexes
+CREATE INDEX idx_tax_rules_chunk ON tax_rules(chunk_id);
+CREATE INDEX idx_tax_rules_chunk_sequence ON tax_rules(chunk_sequence);
+CREATE INDEX idx_tax_rules_confidence ON tax_rules(chunk_confidence);
+
+-- Processing analytics indexes
+CREATE INDEX idx_chunk_stats_processing_time ON chunk_processing_stats(processing_start_time, processing_end_time);
+CREATE INDEX idx_chunk_stats_quality ON chunk_processing_stats(quality_score);
+
+-- Composite indexes for common query patterns
+CREATE INDEX idx_rules_type_chunk ON tax_rules(rule_type, chunk_id);
+CREATE INDEX idx_chunks_doc_status ON document_chunks(document_id, processing_status);
 ```
 
 ### 3. Dynamic Form Generation
@@ -536,28 +766,327 @@ function semanticSearch(string query, int limit = 10) returns SearchResult[]|err
     // Generate query embedding using Gemini
     float[] queryVector = check generateEmbeddings(query);
     
-    // Search Supabase using pgvector similarity
-    // SELECT *, embedding <-> $1 as distance 
-    // FROM tax_rules 
+    // Search Supabase using pgvector similarity with chunk context
+    // SELECT tr.*, dc.chunk_text, dc.chunk_sequence,
+    //        tr.embedding <-> $1 as distance 
+    // FROM tax_rules tr
+    // JOIN document_chunks dc ON tr.chunk_id = dc.id
+    // WHERE tr.effective_date <= CURRENT_DATE
     // ORDER BY distance 
     // LIMIT $2
     
-    // Return ranked results with relevance scores
+    // Return ranked results with chunk context and relevance scores
     return [];
+}
+
+// Enhanced search with chunk-aware context
+function chunkAwareSemanticSearch(string query, string? taxType = (), int limit = 10) 
+    returns ChunkSearchResult[]|error {
+    
+    float[] queryVector = check generateEmbeddings(query);
+    
+    // Multi-level search: document level + chunk level
+    // 1. Find relevant chunks first
+    ChunkSearchResult[] chunkResults = check searchRelevantChunks(queryVector, taxType, limit * 2);
+    
+    // 2. Include neighboring chunks for context
+    ChunkSearchResult[] enrichedResults = check includeChunkContext(chunkResults, limit);
+    
+    return enrichedResults;
+}
+```
+
+## Document Chunking Strategy & Implementation
+
+### Chunking Architecture for Sri Lankan Tax Documents
+
+**Strategic Approach:**
+Sri Lankan tax documents follow specific patterns that require intelligent chunking to preserve regulatory context and ensure accurate rule extraction.
+
+#### Document Types and Chunking Strategies
+
+**1. Income Tax Documents:**
+- **Structure**: Chapters → Sections → Subsections → Tax brackets
+- **Chunking**: Preserve complete tax bracket tables within chunks
+- **Overlap**: Include previous bracket for threshold context
+
+**2. VAT Regulations:**
+- **Structure**: Rate schedules → Exemption lists → Calculation methods
+- **Chunking**: Keep rate tables intact, separate exemption categories
+- **Overlap**: Include rate context for exemption decisions
+
+**3. PAYE Guidelines:**
+- **Structure**: Calculation formulas → Deduction tables → Filing requirements
+- **Chunking**: Preserve mathematical formulas and their explanations
+- **Overlap**: Include formula context for deduction calculations
+
+#### Implementation Guidelines
+
+**Chunk Size Optimization:**
+```ballerina
+// Optimal chunk sizes for different content types
+const map<int> CHUNK_SIZES = {
+    "tax_brackets": 800,      // Preserve complete bracket tables
+    "exemptions": 600,        // List-based content
+    "formulas": 1000,         // Mathematical content with explanations
+    "procedures": 1200,       // Step-by-step processes
+    "definitions": 400        // Terminology sections
+};
+
+// Context overlap based on content complexity
+const map<int> OVERLAP_SIZES = {
+    "tax_brackets": 150,      // Previous bracket context
+    "exemptions": 100,        // Category context
+    "formulas": 200,          // Formula derivation context
+    "procedures": 180,        // Process flow context
+    "definitions": 80         // Term relationship context
+};
+```
+
+**Error Handling and Recovery:**
+```ballerina
+function robustChunkProcessing(DocumentChunk[] chunks, string documentId) returns ProcessingResult|error {
+    ProcessingResult result = {successCount: 0, failureCount: 0, retryQueue: []};
+    
+    foreach var chunk in chunks {
+        try {
+            check processChunkWithRetry(chunk, documentId, maxRetries = 3);
+            result.successCount += 1;
+        } on fail error e {
+            log:printError("Chunk processing failed after retries: " + chunk.id);
+            result.failureCount += 1;
+            result.retryQueue.push(chunk);
+            
+            // Mark chunk for manual review
+            check markChunkForReview(chunk.id, e.message());
+        }
+    }
+    
+    return result;
+}
+
+function processChunkWithRetry(DocumentChunk chunk, string documentId, int maxRetries) returns error? {
+    int attempts = 0;
+    
+    while (attempts < maxRetries) {
+        try {
+            return check processChunkWithLLM(chunk, documentId);
+        } on fail error e {
+            attempts += 1;
+            if (attempts >= maxRetries) {
+                return e;
+            }
+            
+            // Exponential backoff for API rate limiting
+            int delay = attempts * attempts * 2;
+            check waitForSeconds(delay);
+        }
+    }
+}
+```
+
+**Quality Assurance for Chunk Processing:**
+```ballerina
+function validateChunkQuality(DocumentChunk chunk, TaxRule[] extractedRules) returns QualityScore {
+    QualityScore score = {overall: 0.0, factors: {}};
+    
+    // Factor 1: Rule completeness (0.0 - 1.0)
+    decimal completenessScore = calculateRuleCompleteness(extractedRules);
+    score.factors["completeness"] = completenessScore;
+    
+    // Factor 2: Context preservation (0.0 - 1.0)
+    decimal contextScore = calculateContextPreservation(chunk, extractedRules);
+    score.factors["context"] = contextScore;
+    
+    // Factor 3: Cross-chunk consistency (0.0 - 1.0)
+    decimal consistencyScore = calculateCrossChunkConsistency(chunk, extractedRules);
+    score.factors["consistency"] = consistencyScore;
+    
+    // Factor 4: Tax-specific keyword coverage (0.0 - 1.0)
+    decimal keywordScore = calculateTaxKeywordCoverage(chunk.text, extractedRules);
+    score.factors["keywords"] = keywordScore;
+    
+    // Weighted overall score
+    score.overall = (completenessScore * 0.3) + (contextScore * 0.25) + 
+                   (consistencyScore * 0.25) + (keywordScore * 0.2);
+    
+    return score;
+}
+```
+
+**Performance Monitoring for Chunking:**
+```ballerina
+function monitorChunkProcessingPerformance(string documentId) returns PerformanceMetrics|error {
+    // Query chunk processing statistics
+    map<anydata> params = {"document_id": documentId};
+    
+    // Get processing metrics from database
+    json metricsQuery = {
+        "query": `
+            SELECT 
+                COUNT(*) as total_chunks,
+                AVG(EXTRACT(EPOCH FROM (processed_at - created_at))) as avg_processing_time,
+                SUM(gemini_tokens_used) as total_tokens,
+                SUM(rules_extracted) as total_rules,
+                AVG(quality_score) as avg_quality_score,
+                COUNT(CASE WHEN processing_status = 'failed' THEN 1 END) as failed_chunks
+            FROM document_chunks dc
+            LEFT JOIN chunk_processing_stats cps ON dc.id = cps.chunk_id
+            WHERE dc.document_id = $1
+        `,
+        "params": [documentId]
+    };
+    
+    json result = check supabaseClient->query(metricsQuery);
+    return mapToPerformanceMetrics(result);
 }
 ```
 
 ## Testing Strategy
 
 ### Unit Tests
+
+**Core Functionality:**
 - Test individual calculation functions
 - Validate form schema generation
 - Test document processing pipeline
 
+**Chunking-Specific Tests:**
+```ballerina
+@test:Config {}
+function testSemanticChunking() returns error? {
+    // Test tax document chunking
+    string testDocument = loadTestTaxDocument("income_tax_sample.txt");
+    DocumentChunk[] chunks = check chunkTaxDocument(testDocument, "test-doc-1");
+    
+    // Validate chunk count and sizes
+    test:assertTrue(chunks.length() > 0, "Should generate at least one chunk");
+    test:assertTrue(chunks.length() <= 20, "Should not generate excessive chunks");
+    
+    // Validate chunk overlap
+    foreach int i in 1..<chunks.length() {
+        string previousEnd = getLastWords(chunks[i-1].text, 50);
+        string currentStart = getFirstWords(chunks[i].text, 50);
+        test:assertTrue(hasOverlap(previousEnd, currentStart), "Chunks should have overlap");
+    }
+}
+
+@test:Config {}
+function testChunkProcessingWithGemini() returns error? {
+    DocumentChunk testChunk = createTestChunk("income_tax_brackets");
+    TaxRule[] rules = check extractRulesFromChunk(testChunk);
+    
+    test:assertTrue(rules.length() > 0, "Should extract at least one tax rule");
+    test:assertTrue(rules[0].ruleType == "income_tax", "Should identify correct rule type");
+}
+
+@test:Config {}
+function testChunkQualityValidation() returns error? {
+    DocumentChunk chunk = createTestChunk("vat_rates");
+    TaxRule[] rules = check extractRulesFromChunk(chunk);
+    QualityScore score = validateChunkQuality(chunk, rules);
+    
+    test:assertTrue(score.overall >= 0.7, "Quality score should be acceptable");
+    test:assertTrue(score.factors.hasKey("completeness"), "Should have completeness factor");
+}
+
+@test:Config {}
+function testParallelChunkProcessing() returns error? {
+    DocumentChunk[] chunks = createTestChunks(5);
+    check processChunksInParallel(chunks, "test-doc-parallel");
+    
+    // Verify all chunks were processed
+    foreach var chunk in chunks {
+        string status = check getChunkProcessingStatus(chunk.id);
+        test:assertTrue(status == "completed" || status == "failed", 
+                       "Chunk should have final status");
+    }
+}
+
+@test:Config {}
+function testChunkErrorRecovery() returns error? {
+    DocumentChunk failingChunk = createFailingTestChunk();
+    
+    try {
+        check processChunkWithRetry(failingChunk, "test-doc-error", 2);
+        test:assertFail("Should have failed after retries");
+    } on fail error e {
+        // Expected failure - verify retry logic worked
+        int retryCount = check getChunkRetryCount(failingChunk.id);
+        test:assertEquals(retryCount, 2, "Should have attempted 2 retries");
+    }
+}
+```
+
 ### Integration Tests
+
+**Core Integration:**
 - End-to-end API testing
 - Database operation testing
 - File upload and processing workflows
+
+**Chunking Integration Tests:**
+```ballerina
+@test:Config {}
+function testEndToEndDocumentProcessing() returns error? {
+    // Upload test document
+    string documentId = check uploadTestDocument("sri_lanka_income_tax_2024.pdf");
+    
+    // Trigger processing
+    check processDocument(documentId);
+    
+    // Wait for processing completion
+    check waitForProcessingCompletion(documentId, timeoutSeconds = 300);
+    
+    // Validate chunks were created
+    DocumentChunk[] chunks = check getDocumentChunks(documentId);
+    test:assertTrue(chunks.length() > 0, "Should create document chunks");
+    
+    // Validate rules were extracted from chunks
+    TaxRule[] rules = check getTaxRulesForDocument(documentId);
+    test:assertTrue(rules.length() > 0, "Should extract tax rules from chunks");
+    
+    // Validate chunk-to-rule mapping
+    foreach var rule in rules {
+        test:assertTrue(rule.chunkId != (), "Rule should reference source chunk");
+        DocumentChunk sourceChunk = check getChunkById(rule.chunkId);
+        test:assertTrue(sourceChunk.processingStatus == "completed", 
+                       "Source chunk should be processed");
+    }
+}
+
+@test:Config {}
+function testVectorSearchWithChunks() returns error? {
+    // Setup test data with multiple chunks
+    string documentId = check setupTestDocumentWithChunks();
+    
+    // Perform semantic search
+    SearchResult[] results = check chunkAwareSemanticSearch("income tax brackets");
+    
+    test:assertTrue(results.length() > 0, "Should find relevant chunks");
+    test:assertTrue(results[0].distance < 0.3, "Should have high relevance");
+    
+    // Verify chunk context is included
+    test:assertTrue(results[0].chunkContext != (), "Should include chunk context");
+}
+
+@test:Config {}
+function testChunkProcessingPerformance() returns error? {
+    string documentId = check uploadLargeTestDocument();
+    
+    time:Utc startTime = time:utcNow();
+    check processDocument(documentId);
+    time:Utc endTime = time:utcNow();
+    
+    decimal processingTime = time:diffSeconds(endTime, startTime);
+    test:assertTrue(processingTime < 600.0, "Should process within 10 minutes");
+    
+    // Validate performance metrics
+    PerformanceMetrics metrics = check monitorChunkProcessingPerformance(documentId);
+    test:assertTrue(metrics.avgProcessingTime < 60.0, "Average chunk time < 60 seconds");
+    test:assertTrue(metrics.totalTokens < 100000, "Should stay within token limits");
+}
+```
 
 ### UI Tests
 - Component rendering tests
@@ -760,26 +1289,45 @@ Create `.env.local` files for:
 
 ### Core Development Tasks
 - [ ] Set up Supabase database schema for tax rules with pgvector
+- [ ] Create document_chunks table with proper indexing
 - [ ] Create Supabase Storage bucket for file uploads
 - [ ] Implement basic tax calculation logic
 - [ ] Build frontend components for tax forms
 - [ ] Connect frontend to Supabase and backend APIs
 - [ ] Add basic form validation and error handling
 
+### Document Chunking Implementation Tasks
+- [ ] Implement intelligent chunking in text_extractor.bal module
+- [ ] Set up semantic chunking for tax document structure
+- [ ] Implement overlap strategy for context preservation
+- [ ] Create parallel chunk processing with Gemini API
+- [ ] Add chunk quality validation and scoring
+- [ ] Implement error recovery and retry logic for failed chunks
+- [ ] Set up chunk processing analytics and monitoring
+- [ ] Create chunk-aware semantic search functionality
+
 ### Advanced Development Tasks
-- [ ] Integrate Gemini API for document processing
-- [ ] Implement dynamic form generation from Supabase schemas
-- [ ] Set up pgvector semantic search with embeddings
-- [ ] Add comprehensive error handling and logging
-- [ ] Implement local testing suite with Supabase local dev
-- [ ] Create development documentation for free tier usage
+- [ ] Integrate Gemini API for document processing with chunking
+- [ ] Implement dynamic form generation from chunk-derived schemas
+- [ ] Set up pgvector semantic search with per-chunk embeddings
+- [ ] Add comprehensive error handling and logging for chunk processing
+- [ ] Implement chunk processing performance monitoring
+- [ ] Create development documentation for chunking strategy
+- [ ] Set up chunk processing queue with Redis for scalability
 
 ### Testing and Validation
-- [ ] Test all API endpoints with sample data using Supabase
-- [ ] Validate tax calculations with known test cases
-- [ ] Test file upload and processing workflow with Supabase Storage
-- [ ] Verify form generation and validation with dynamic schemas
-- [ ] Check Supabase operations and data integrity with RLS
-- [ ] Test error handling and edge cases with free tier limitations
+- [ ] Test chunking algorithms with various document types
+- [ ] Validate chunk overlap and context preservation
+- [ ] Test parallel chunk processing performance
+- [ ] Verify chunk-to-rule mapping accuracy
+- [ ] Test chunk processing error recovery mechanisms
+- [ ] Test semantic search with chunk-aware queries
+- [ ] Validate chunk quality scores and metrics
+- [ ] Test all API endpoints with chunked document data
+- [ ] Validate tax calculations with chunk-derived rules
+- [ ] Test file upload and chunk processing workflow
+- [ ] Verify form generation from chunk-processed schemas
+- [ ] Check chunk processing with Supabase RLS policies
+- [ ] Test error handling for chunk processing edge cases
 
-This guide focuses on local development using entirely free technologies to help you build and test the Sri Lankan tax calculation application on your development machine. Each component uses free tiers and open-source solutions, making it cost-effective for development and testing.
+This comprehensive guide now includes detailed chunking implementation using entirely free technologies, optimized for Sri Lankan tax document processing on your development machine.
