@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sri Lankan Tax Document Processor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #34495e;
+        }
+
+        input[type="text"],
+        input[type="file"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+
+        input[type="file"] {
+            padding: 10px;
+        }
+
+        .submit-btn {
+            background-color: #3498db;
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+            transition: background-color 0.3s;
+        }
+
+        .submit-btn:hover {
+            background-color: #2980b9;
+        }
+
+        .info {
+            background-color: #e8f4fd;
+            border: 1px solid #bee5eb;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+
+        .test-links {
+            margin-top: 30px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+
+        .test-links h3 {
+            margin-top: 0;
+            color: #495057;
+        }
+
+        .test-links a {
+            display: inline-block;
+            margin: 5px 10px 5px 0;
+            padding: 8px 15px;
+            background-color: #6c757d;
+            color: white;
+            text-decoration: none;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+
+        .test-links a:hover {
+            background-color: #5a6268;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🏛️ Sri Lankan Tax Document Processor</h1>
+
+        <div class="info">
+            <strong>📄 Supported Features:</strong>
+            <ul>
+                <li>PDF and Word document text extraction</li>
+                <li>Tax document type identification (Income Tax, VAT, PAYE)</li>
+                <li>Automatic extraction of tax rates, definitions, and exemptions</li>
+                <li>Document structure analysis</li>
+            </ul>
+        </div>
+
+        <form action="http://localhost:5000/api/v1/documents/upload" method="post" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="filename">📝 Document Name:</label>
+                <input type="text" id="filename" name="filename" value="tax-document.pdf"
+                    placeholder="Enter a name for your document" required>
+                <small style="color: #6c757d;">This will be used to identify your document in the system</small>
+            </div>
+
+            <div class="form-group">
+                <label for="file">📎 Choose Tax Document:</label>
+                <input type="file" id="file" name="file" accept=".pdf,.doc,.docx" required>
+                <small style="color: #6c757d;">Supported formats: PDF, DOC, DOCX</small>
+            </div>
+
+            <button type="submit" class="submit-btn">🚀 Upload & Process Document</button>
+        </form>
+
+        <div class="test-links">
+            <h3>🔧 API Testing Links:</h3>
+            <a href="http://localhost:5000/api/health" target="_blank">Health Check</a>
+            <a href="#" onclick="testWithSampleData()">Test with Sample Data</a>
+            <a href="javascript:void(0)" onclick="showApiInfo()">API Documentation</a>
+        </div>
+    </div>
+
+    <script>
+        function testWithSampleData() {
+            // Create a simple text file to simulate a document upload
+            const sampleText = `
+INLAND REVENUE ACT - INCOME TAX
+REPUBLIC OF SRI LANKA
+
+Section 1 - Tax Rates
+Individual tax rates for year 2024:
+- First Rs. 1,200,000: 0%
+- Next Rs. 500,000: 6%
+- Next Rs. 500,000: 12%
+- Balance: 18%
+
+Section 2 - Exemptions
+The following are exempt:
+- Government securities interest
+- First Rs. 100,000 of dividends
+`;
+
+            const blob = new Blob([sampleText], { type: 'text/plain' });
+            const file = new File([blob], 'sample-tax-document.txt', { type: 'text/plain' });
+
+            const formData = new FormData();
+            formData.append('filename', 'sample-tax-document.pdf');
+            formData.append('file', file);
+
+            fetch('http://localhost:5000/api/v1/documents/upload', {
+                method: 'POST',
+                body: formData
+            })
+                .then(response => response.json())
+                .then(data => {
+                    alert('Sample test completed! Check browser console for full response.');
+                    console.log('API Response:', data);
+                })
+                .catch(error => {
+                    alert('Error: ' + error.message);
+                    console.error('Error:', error);
+                });
+        }
+
+        function showApiInfo() {
+            const info = `
+API Endpoints:
+- Health: GET http://localhost:5000/api/health
+- Upload: POST http://localhost:5000/api/v1/documents/upload
+
+Upload Parameters:
+- filename (text): Name for the document
+- file (file): PDF or Word document
+
+Expected Response:
+- Document ID and processing status
+- Extracted text preview
+- Document type (Income Tax, VAT, PAYE)
+- Extracted tax rates, definitions, exemptions
+- Processing steps completed
+            `;
+            alert(info);
+        }
+
+        // Handle form submission to show loading state
+        document.querySelector('form').addEventListener('submit', function () {
+            const submitBtn = document.querySelector('.submit-btn');
+            submitBtn.textContent = '⏳ Processing...';
+            submitBtn.disabled = true;
+        });
+    </script>
+</body>
+
+</html>

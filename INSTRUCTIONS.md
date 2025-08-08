@@ -72,6 +72,7 @@ tax-app/
 │   ├── styles/              # CSS and styling
 │   └── types/               # TypeScript definitions
 ├── backend/                 # Ballerina services
+│   ├── libs/               # Java library dependencies (PDFBox, Apache POI)
 │   ├── services/           # API services
 │   ├── modules/            # Business logic modules
 │   ├── config/             # Configuration files
@@ -86,10 +87,12 @@ tax-app/
 ### Prerequisites
 
 1. **Node.js** (v18 or higher)
-2. **Ballerina** (latest version)
-3. **Supabase account** (free tier)
-4. **Google AI Studio** account for Gemini API (free tier)
-5. **Git** for version control
+2. **Ballerina** (latest version with Java 17+ support)
+3. **Java Development Kit (JDK 17 or higher)** - Required for Java interop libraries
+4. **Supabase account** (free tier)
+5. **Google AI Studio** account for Gemini API (free tier)
+6. **Git** for version control
+7. **curl** or **wget** - For downloading Java library dependencies
 
 ### Environment Setup
 
@@ -105,9 +108,29 @@ cd frontend
 npm install
 ```
 
-3. **Set up Ballerina backend:**
+3. **Set up Ballerina backend with Java interop libraries:**
 ```bash
 cd backend
+
+# Create libs directory for Java dependencies
+mkdir libs
+
+# Download required Java libraries for document processing
+# PDFBox for PDF processing
+curl -L "https://repo1.maven.org/maven2/org/apache/pdfbox/pdfbox-app/3.0.0/pdfbox-app-3.0.0.jar" -o libs/pdfbox-app-3.0.0.jar
+
+# Apache POI for Office document processing
+curl -L "https://repo1.maven.org/maven2/org/apache/poi/poi/5.2.4/poi-5.2.4.jar" -o libs/poi-5.2.4.jar
+curl -L "https://repo1.maven.org/maven2/org/apache/poi/poi-ooxml/5.2.4/poi-ooxml-5.2.4.jar" -o libs/poi-ooxml-5.2.4.jar
+
+# Required dependencies
+curl -L "https://repo1.maven.org/maven2/commons-logging/commons-logging/1.2/commons-logging-1.2.jar" -o libs/commons-logging-1.2.jar
+
+# Configure Ballerina.toml with Java classpath
+echo '[platform.java17]' >> Ballerina.toml
+echo 'path = "./libs/pdfbox-app-3.0.0.jar:./libs/poi-5.2.4.jar:./libs/poi-ooxml-5.2.4.jar:./libs/commons-logging-1.2.jar"' >> Ballerina.toml
+
+# Build the project with Java dependencies
 bal build
 ```
 
@@ -164,10 +187,10 @@ service /api/documents on new http:Listener(8080) {
 }
 ```
 
-**Enhanced Processing Pipeline with Intelligent Chunking:**
+**Enhanced Processing Pipeline with Java Interop Integration:**
 
 1. **File validation and storage** (Supabase Storage)
-2. **Text extraction** (PDF/Word parsing with layout preservation)
+2. **Advanced text extraction** (Java PDFBox/Apache POI for professional document parsing)
 3. **Intelligent chunking** (Semantic segmentation with context overlap)
 4. **Parallel chunk processing** (Multiple Gemini API calls)
 5. **LLM-based rule extraction** (Per-chunk rule identification)
@@ -334,6 +357,129 @@ function processChunkWithLLM(DocumentChunk chunk, string documentId) returns err
         check updateChunkStatus(chunk.id, "failed", 0, e.message());
     }
 }
+```
+
+### 1.2. Java Interop Integration for Enhanced Document Processing
+
+**Implementation of Professional PDF/Office Document Processing:**
+
+The system leverages Ballerina's Java interoperability to integrate industry-standard document processing libraries for superior text extraction capabilities.
+
+#### Java Library Integration Setup
+
+**Required Dependencies:**
+- **Apache PDFBox 3.0.0** - Professional PDF text extraction, layout preservation, table detection
+- **Apache POI 5.2.4** - Microsoft Office document processing (Word, Excel, PowerPoint)
+- **Commons Logging 1.2** - Logging framework dependency
+
+#### Enhanced PDF Processing with Java Interop
+
+```ballerina
+// pdf_parser.bal - Enhanced with Java PDFBox integration
+import ballerina/jballerina.java;
+import ballerina/log;
+
+// Java interop functions for PDFBox integration
+function extractTextWithPDFBox(byte[] pdfContent) returns string|error = @java:Method {
+    'class: "org.apache.pdfbox.pdmodel.PDDocument",
+    name: "load"
+} external;
+
+function extractLayoutPreservingText(byte[] pdfContent) returns DocumentExtractionResult|error {
+    log:printInfo("Using Java PDFBox for professional PDF extraction");
+    
+    // Use Java interop for advanced PDF processing
+    string extractedText = check extractTextWithPDFBox(pdfContent);
+    
+    // Additional processing with PDFBox capabilities
+    TableData[] tables = check extractTablesWithPDFBox(pdfContent);
+    DocumentStructure structure = check parseDocumentStructure(pdfContent);
+    
+    return {
+        extractedText: extractedText,
+        structure: structure,
+        tables: tables,
+        totalPages: check getPageCount(pdfContent),
+        sections: check extractSections(extractedText),
+        images: check extractImages(pdfContent),
+        metadata: check extractMetadata(pdfContent)
+    };
+}
+
+// Enhanced table extraction using PDFBox
+function extractTablesWithPDFBox(byte[] pdfContent) returns TableData[]|error = @java:Method {
+    'class: "org.apache.pdfbox.text.PDFTextStripperByArea"
+} external;
+
+// Layout-aware text extraction preserving document structure
+function parseDocumentStructure(byte[] pdfContent) returns DocumentStructure|error = @java:Method {
+    'class: "org.apache.pdfbox.pdmodel.PDDocument"
+} external;
+```
+
+#### Office Document Processing with Apache POI
+
+```ballerina
+// word_processor.bal - Enhanced with Apache POI integration
+import ballerina/jballerina.java;
+
+// Java interop for Word document processing
+function extractTextFromWord(byte[] wordContent) returns DocumentExtractionResult|error = @java:Method {
+    'class: "org.apache.poi.xwpf.usermodel.XWPFDocument",
+    name: "getText"
+} external;
+
+// Excel spreadsheet processing for tax tables
+function extractTextFromExcel(byte[] excelContent) returns DocumentExtractionResult|error = @java:Method {
+    'class: "org.apache.poi.xssf.usermodel.XSSFWorkbook"
+} external;
+
+// PowerPoint presentation processing
+function extractTextFromPowerPoint(byte[] pptContent) returns DocumentExtractionResult|error = @java:Method {
+    'class: "org.apache.poi.xslf.usermodel.XMLSlideShow"
+} external;
+```
+
+#### Benefits of Java Interop Approach
+
+**1. Professional Document Processing:**
+- Industry-standard libraries with proven reliability
+- Advanced layout preservation and structure detection
+- Support for complex PDF features (forms, annotations, embedded content)
+- Native handling of password-protected documents
+
+**2. Enhanced Tax Document Analysis:**
+- Accurate extraction of tax tables and bracket information
+- Preservation of mathematical formulas and calculations
+- Detection of form fields and structured data
+- Support for scanned documents with OCR capabilities
+
+**3. Comprehensive Format Support:**
+- PDF documents (all versions, including complex layouts)
+- Microsoft Word documents (.docx, .doc)
+- Excel spreadsheets (.xlsx, .xls) for tax tables
+- PowerPoint presentations (.pptx, .ppt)
+
+**4. Error Handling and Resilience:**
+- Robust handling of corrupted or malformed documents
+- Comprehensive error reporting and logging
+- Memory-efficient processing of large documents
+
+**5. Integration Architecture:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Ballerina Service Layer                      │
+├─────────────────────────────────────────────────────────────────┤
+│ document_service.bal │ pdf_parser.bal │ word_processor.bal     │
+└─────────────┬───────────────────────────────────────────────────┘
+              │ Java Interop Calls
+┌─────────────▼───────────────────────────────────────────────────┐
+│                      Java Library Layer                         │
+├─────────────────────────────────────────────────────────────────┤
+│ Apache PDFBox        │ Apache POI       │ Commons Logging       │
+│ - PDF Processing     │ - Office Docs    │ - Error Handling      │
+│ - Layout Analysis    │ - Table Extract  │ - Performance Monitor │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### 2. Tax Rule Management
@@ -1248,6 +1394,32 @@ Create `.env.local` files for:
    - Verify all dependencies are correctly imported
    - Check port conflicts (default 8080)
    - Review Ballerina logs for runtime errors
+
+3.1. **Java Interop Issues**
+   - **Missing Java libraries**: Ensure all JAR files are downloaded in `libs/` directory
+   - **Classpath configuration**: Verify `Ballerina.toml` has correct `[platform.java17]` path
+   - **Java version compatibility**: Ensure JDK 17+ is installed and accessible
+   - **Library version conflicts**: Use exact versions specified (PDFBox 3.0.0, POI 5.2.4)
+   - **Memory issues with large documents**: Increase JVM heap size if needed
+   - **PDFBox extraction errors**: Check document format and corruption
+   - **POI Office document errors**: Verify document compatibility and format support
+   - **Java interop compilation errors**: Check external function annotations and signatures
+
+   **Common Java Interop Fixes:**
+   ```bash
+   # Verify Java installation
+   java -version
+   
+   # Check if JAR files exist
+   ls -la backend/libs/
+   
+   # Rebuild with verbose output
+   cd backend
+   bal build --debug
+   
+   # Test Java interop functionality
+   bal test modules/document_processor
+   ```
 
 4. **API Integration Problems**
    - Verify backend is running and accessible

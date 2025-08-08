@@ -238,10 +238,10 @@ backend/
 │   │   ├── income_tax.bal
 │   │   ├── vat_calculator.bal
 │   │   └── paye_calculator.bal
-│   ├── document_processor/       # Document handling
-│   │   ├── pdf_parser.bal
-│   │   ├── word_processor.bal
-│   │   └── text_extractor.bal
+│   ├── document_processor/       # Document handling with Java interop
+│   │   ├── pdf_parser.bal        # Enhanced with Java PDFBox integration
+│   │   ├── word_processor.bal    # Enhanced with Java Apache POI integration
+│   │   └── text_extractor.bal    # Intelligent chunking with Java support
 │   ├── llm_integration/          # AI/LLM integration
 │   │   ├── gemini_client.bal
 │   │   ├── embedding_generator.bal
@@ -287,6 +287,78 @@ backend/
 │  (All using Supabase client with Row Level Security)          │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### Java Interop Integration for Enhanced Document Processing
+
+**Architecture Decision: Java Library Integration**
+
+The system utilizes Ballerina's Java interoperability features to integrate professional-grade PDF and document processing libraries for superior text extraction capabilities.
+
+#### Document Processing Architecture with Java Interop
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                   Document Processing Layer                     │
+├─────────────────────────────────────────────────────────────────┤
+│  Ballerina Services    │  Java Interop Layer │  External APIs  │
+│  - document_service    │  - PDFBox Integration│  - Fallback     │
+│  - pdf_parser         │  - Apache POI        │  - Gemini API   │
+│  - word_processor     │  - Text Extraction   │  - File Storage │
+│  - text_extractor     │  - Layout Parsing    │  - Supabase     │
+└─────────────┬───────────────────────────────────────────────────┘
+              │
+┌─────────────▼───────────────────────────────────────────────────┐
+│                 Java Library Integration                        │
+├─────────────────────────────────────────────────────────────────┤
+│  PDFBox (PDF Processing)     │  Apache POI (Office Docs)       │
+│  - Text extraction           │  - Word document processing     │
+│  - Layout preservation       │  - Excel spreadsheet parsing   │
+│  - Table detection          │  - PowerPoint extraction        │
+│  - Metadata extraction      │  - Format preservation          │
+│  - Embedded content         │  - Complex layouts              │
+│                              │                                  │
+│  Benefits:                   │  Benefits:                      │
+│  - Professional PDF parsing │  - Complete Office support     │
+│  - Complex layout handling  │  - Native format understanding │
+│  - Compressed content       │  - Advanced text extraction    │
+│  - Scanned document OCR     │  - Metadata preservation       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Implementation Strategy
+
+**1. JAR Dependencies Management:**
+```
+backend/
+├── libs/                        # Java library dependencies
+│   ├── pdfbox-app-3.0.0.jar    # Apache PDFBox for PDF processing
+│   ├── poi-5.2.4.jar           # Apache POI for Office documents
+│   ├── poi-ooxml-5.2.4.jar     # POI OOXML support
+│   └── commons-logging-1.2.jar  # Required dependencies
+├── modules/
+│   └── document_processor/
+│       ├── pdf_parser.bal       # Enhanced with Java interop
+│       └── java_interop.bal     # Java integration utilities
+```
+
+**2. Ballerina Configuration:**
+```toml
+# Ballerina.toml
+[platform.java17]
+path = "./libs/pdfbox-app-3.0.0.jar:./libs/poi-5.2.4.jar:./libs/poi-ooxml-5.2.4.jar"
+```
+
+**3. Enhanced Processing Capabilities:**
+- **Superior PDF Extraction**: Professional-grade parsing of complex PDF layouts, tables, and embedded content
+- **Office Document Support**: Native processing of Word, Excel, and PowerPoint documents
+- **Layout Preservation**: Maintain document structure and formatting context
+- **Metadata Extraction**: Access document properties, creation dates, and authorship information
+- **Error Resilience**: Robust handling of corrupted or password-protected documents
+- **Performance Optimization**: Efficient processing of large document collections
+
+**4. Fallback Strategy:**
+- Primary: Java interop with PDFBox/Apache POI
+- Secondary: External PDF extraction services
+- Tertiary: Basic Ballerina string parsing for development/testing
 
 ## Data Architecture
 
@@ -535,29 +607,7 @@ export async function POST(request: NextRequest) {
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
-### GraphQL API (Optional)
 
-#### Schema Design
-```graphql
-type Query {
-  taxRules(type: TaxType, effectiveDate: Date): [TaxRule]
-  taxCalculation(input: TaxInput!): TaxResult
-  formSchema(type: TaxType!): FormSchema
-  documents: [Document]
-}
-
-type Mutation {
-  uploadDocument(file: Upload!): Document
-  processDocument(id: ID!): ProcessingStatus
-  calculateTax(input: TaxInput!): TaxResult
-  updateTaxRule(id: ID!, data: TaxRuleInput!): TaxRule
-}
-
-type Subscription {
-  documentProcessing(documentId: ID!): ProcessingStatus
-  taxCalculationUpdates: TaxResult
-}
-```
 
 ## Security Architecture
 
