@@ -9,3 +9,11 @@ observabilityIncluded = true
 
 [[platform.java17.dependency]]
 path = "./libs/document-extractor.jar"
+
+[[platform.java17.dependency]]
+path = "./libs/postgresql-42.7.2.jar"
+
+[[dependency]]
+org = "ballerinax"
+name = "postgresql"
+version = "1.11.0"

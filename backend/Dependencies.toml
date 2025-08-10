@@ -174,15 +174,6 @@ dependencies = [
 
 [[package]]
 org = "ballerina"
-name = "lang.error"
-version = "0.0.0"
-scope = "testOnly"
-dependencies = [
-	{org = "ballerina", name = "jballerina.java"}
-]
-
-[[package]]
-org = "ballerina"
 name = "lang.int"
 version = "0.0.0"
 dependencies = [
@@ -289,25 +280,25 @@ dependencies = [
 
 [[package]]
 org = "ballerina"
+name = "sql"
+version = "1.16.0"
+dependencies = [
+	{org = "ballerina", name = "io"},
+	{org = "ballerina", name = "jballerina.java"},
+	{org = "ballerina", name = "lang.object"},
+	{org = "ballerina", name = "time"}
+]
+modules = [
+	{org = "ballerina", packageName = "sql", moduleName = "sql"}
+]
+
+[[package]]
+org = "ballerina"
 name = "task"
 version = "2.7.0"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "time"}
-]
-
-[[package]]
-org = "ballerina"
-name = "test"
-version = "0.0.0"
-scope = "testOnly"
-dependencies = [
-	{org = "ballerina", name = "jballerina.java"},
-	{org = "ballerina", name = "lang.array"},
-	{org = "ballerina", name = "lang.error"}
-]
-modules = [
-	{org = "ballerina", packageName = "test", moduleName = "test"}
 ]
 
 [[package]]
@@ -342,6 +333,21 @@ modules = [
 ]
 
 [[package]]
+org = "ballerinax"
+name = "postgresql"
+version = "1.11.0"
+dependencies = [
+	{org = "ballerina", name = "crypto"},
+	{org = "ballerina", name = "io"},
+	{org = "ballerina", name = "jballerina.java"},
+	{org = "ballerina", name = "sql"},
+	{org = "ballerina", name = "time"}
+]
+modules = [
+	{org = "ballerinax", packageName = "postgresql", moduleName = "postgresql"}
+]
+
+[[package]]
 org = "oasis"
 name = "backend"
 version = "0.1.0"
@@ -352,9 +358,10 @@ dependencies = [
 	{org = "ballerina", name = "jballerina.java.arrays"},
 	{org = "ballerina", name = "log"},
 	{org = "ballerina", name = "mime"},
-	{org = "ballerina", name = "test"},
+	{org = "ballerina", name = "sql"},
 	{org = "ballerina", name = "time"},
-	{org = "ballerinai", name = "observe"}
+	{org = "ballerinai", name = "observe"},
+	{org = "ballerinax", name = "postgresql"}
 ]
 modules = [
 	{org = "oasis", packageName = "backend", moduleName = "backend"}

@@ -3,9 +3,24 @@ import ballerina/jballerina.java;
 import ballerina/jballerina.java.arrays as jarrays;
 import ballerina/log;
 import ballerina/mime;
+import ballerina/sql;
 import ballerina/time;
+import ballerinax/postgresql;
 
-// No storage needed - documents are processed immediately
+// Phase 6: Vector Storage & Database Persistence Implementation
+
+// ============================================================================
+// Supabase Configuration (Phase 6)
+// ============================================================================
+
+// Supabase Configuration
+configurable string SUPABASE_URL = "https://ohdbwbrutlwikcmpprky.supabase.co";
+configurable string SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9oZGJ3YnJ1dGx3aWtjbXBwcmt5Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NDEzNTI3NCwiZXhwIjoyMDY5NzExMjc0fQ.BDM2DyLfQ3PcJs_9LLQenN8A73TKCIbGjpLMv4WWs9o";
+configurable string SUPABASE_STORAGE_BUCKET = "documents";
+
+// Database Configuration
+configurable string SUPABASE_DB_HOST = "db.ohdbwbrutlwikcmpprky.supabase.co";
+configurable string SUPABASE_DB_PASSWORD = "1234";
 
 // ============================================================================
 // Tokenizer Service Integration
@@ -38,7 +53,401 @@ configurable string GEMINI_API_KEY = "AIzaSyBn6yGwy4qFCftrlcN_OMFKkRX6m_e8ibA";
 const string GEMINI_EMBEDDING_MODEL = "text-embedding-004";
 const int GEMINI_EMBEDDING_DIMENSIONS = 768;
 
-// Tokenizer service types
+// ============================================================================
+// Supabase Integration (Phase 6)
+// ============================================================================
+
+// HTTP client for Supabase Storage operations
+http:Client supabaseStorageClient = check new (SUPABASE_URL + "/storage/v1", {
+    timeout: 60.0,
+    retryConfig: {
+        count: 3,
+        interval: 2.0
+    }
+});
+
+// HTTP client for Supabase REST API operations
+http:Client supabaseRestClient = check new (SUPABASE_URL + "/rest/v1", {
+    timeout: 60.0,
+    retryConfig: {
+        count: 3,
+        interval: 2.0
+    }
+});
+
+// PostgreSQL client for direct database operations
+postgresql:Client dbClient = check new (
+    host = SUPABASE_DB_HOST,
+    port = 5432,
+    database = "postgres",
+    username = "postgres",
+    password = SUPABASE_DB_PASSWORD
+);
+
+# Initialize database connection
+#
+# + return - Success message or error
+function initializeDatabaseConnection() returns string|error {
+    // Test the connection
+    sql:ExecutionResult|sql:Error result = dbClient->execute(`SELECT 1 as test`);
+    if (result is sql:Error) {
+        log:printError("Failed to connect to database: " + result.message());
+        return error("Database connection failed: " + result.message());
+    }
+
+    log:printInfo("✅ Database connection established successfully");
+    return "Database connection established successfully";
+}
+
+# Get headers for Supabase API requests (with service role key)
+#
+# + return - Headers map for authenticated requests
+function getSupabaseHeaders() returns map<string> {
+    return {
+        "Authorization": "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Content-Type": "application/json"
+    };
+}
+
+# Get headers for storage operations
+#
+# + contentType - Content type for the upload
+# + return - Headers map for storage requests
+function getStorageHeaders(string contentType = "application/octet-stream") returns map<string> {
+    return {
+        "Authorization": "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Content-Type": contentType
+    };
+}
+
+// ============================================================================
+// Supabase Storage Functions (Phase 6)
+// ============================================================================
+
+# Upload file to Supabase Storage
+#
+# + fileContent - The file content as byte array
+# + fileName - The filename for storage
+# + documentId - The document ID for path generation
+# + return - Storage path or error
+function uploadFileToSupabase(byte[] fileContent, string fileName, string documentId)
+    returns string|error {
+
+    log:printInfo("📤 Uploading file to Supabase Storage: " + fileName);
+
+    // Generate unique storage path
+    string storagePath = generateStoragePath(fileName, documentId);
+
+    // Determine content type
+    string contentType = getContentTypeFromExtension(getFileExtension(fileName));
+
+    // Upload to Supabase Storage
+    string endpoint = "/object/" + SUPABASE_STORAGE_BUCKET + "/" + storagePath;
+
+    http:Response|error response = supabaseStorageClient->post(endpoint, fileContent,
+        getStorageHeaders(contentType));
+
+    if (response is error) {
+        log:printError("Failed to upload file to Supabase Storage: " + response.message());
+        return error("Storage upload failed: " + response.message());
+    }
+
+    if (response.statusCode != 200) {
+        json|error errorPayload = response.getJsonPayload();
+        string errorMsg = errorPayload is json ? errorPayload.toString() : "Unknown error";
+        log:printError("Supabase Storage upload error: " + errorMsg);
+        return error("Storage upload failed with status " + response.statusCode.toString() + ": " + errorMsg);
+    }
+
+    log:printInfo("✅ File uploaded successfully to: " + storagePath);
+    return storagePath;
+}
+
+# Generate unique storage path for a file
+#
+# + fileName - Original filename
+# + documentId - Document ID for organization
+# + return - Unique storage path
+function generateStoragePath(string fileName, string documentId) returns string {
+    time:Utc currentTime = time:utcNow();
+    // Convert to civil time and extract year/month safely
+    time:Civil civilTime = time:utcToCivil(currentTime);
+
+    // Format month with leading zero if needed
+    string monthStr = civilTime.month < 10 ? "0" + civilTime.month.toString() : civilTime.month.toString();
+    string yearMonth = civilTime.year.toString() + "-" + monthStr;
+
+    // Clean filename - remove all special characters that could cause issues
+    string cleanFileName = replaceStringSimple(fileName, " ", "_");
+    cleanFileName = replaceStringSimple(cleanFileName, "(", "_");
+    cleanFileName = replaceStringSimple(cleanFileName, ")", "_");
+    cleanFileName = replaceStringSimple(cleanFileName, "[", "_");
+    cleanFileName = replaceStringSimple(cleanFileName, "]", "_");
+    cleanFileName = replaceStringSimple(cleanFileName, ",", "_");
+    cleanFileName = replaceStringSimple(cleanFileName, ":", "_");
+    cleanFileName = replaceStringSimple(cleanFileName, ";", "_");
+
+    return yearMonth + "/" + documentId + "/" + cleanFileName;
+}
+
+# Get content type from file extension
+#
+# + extension - File extension (e.g., ".pdf")
+# + return - MIME content type
+function getContentTypeFromExtension(string extension) returns string {
+    match extension {
+        ".pdf" => {
+            return "application/pdf";
+        }
+        ".docx" => {
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        }
+        ".doc" => {
+            return "application/msword";
+        }
+        _ => {
+            return "application/octet-stream";
+        }
+    }
+}
+
+# Download file from Supabase Storage
+#
+# + storagePath - Path to the file in storage
+# + return - File content as byte array or error
+function downloadFileFromSupabase(string storagePath) returns byte[]|error {
+    log:printInfo("📥 Downloading file from Supabase Storage: " + storagePath);
+
+    string endpoint = "/object/" + SUPABASE_STORAGE_BUCKET + "/" + storagePath;
+
+    http:Response|error response = supabaseStorageClient->get(endpoint, getSupabaseHeaders());
+
+    if (response is error) {
+        log:printError("Failed to download file from Supabase Storage: " + response.message());
+        return error("Storage download failed: " + response.message());
+    }
+
+    if (response.statusCode != 200) {
+        json|error errorPayload = response.getJsonPayload();
+        string errorMsg = errorPayload is json ? errorPayload.toString() : "Unknown error";
+        return error("Storage download failed with status " + response.statusCode.toString() + ": " + errorMsg);
+    }
+
+    byte[]|error fileContent = response.getBinaryPayload();
+    if (fileContent is error) {
+        return error("Failed to get file content: " + fileContent.message());
+    }
+
+    log:printInfo("✅ File downloaded successfully");
+    return fileContent;
+}
+
+# Generate public URL for stored file
+#
+# + storagePath - Path to the file in storage
+# + return - Public URL for file access
+function generateFileURL(string storagePath) returns string {
+    return SUPABASE_URL + "/storage/v1/object/public/" + SUPABASE_STORAGE_BUCKET + "/" + storagePath;
+}
+
+// ============================================================================
+// Database Storage Functions (Phase 6) - Placeholder
+// ============================================================================
+
+# Store document metadata in database
+#
+# + documentId - Document ID
+# + fileName - Original filename
+# + storagePath - Path in storage
+# + chunkingResult - Chunking results
+# + return - Success or error
+function storeDocumentMetadata(string documentId, string fileName, string storagePath,
+        ChunkingResult chunkingResult) returns error? {
+
+    log:printInfo("📊 Storing document metadata: " + documentId);
+
+    // Insert document metadata into documents table
+    sql:ParameterizedQuery insertQuery = `
+        INSERT INTO documents (
+            id, filename, file_path, content_type, upload_date, 
+            processed, status, total_chunks, document_type, created_at
+        ) VALUES (
+            ${documentId}, ${fileName}, ${storagePath}, 'application/pdf',
+            NOW(), true, 'completed', ${chunkingResult.totalChunks}, 
+            'tax_document', NOW()
+        )
+        ON CONFLICT (id) DO UPDATE SET
+            processed = true,
+            status = 'completed',
+            total_chunks = ${chunkingResult.totalChunks},
+            updated_at = NOW()
+    `;
+
+    sql:ExecutionResult|sql:Error result = dbClient->execute(insertQuery);
+    if (result is sql:Error) {
+        log:printError("Failed to store document metadata: " + result.message());
+        return error("Database storage failed: " + result.message());
+    }
+
+    log:printInfo("✅ Document metadata stored successfully");
+}
+
+# Store chunks in database with embeddings
+#
+# + chunks - Array of document chunks with embeddings
+# + return - Success or error
+function storeChunksInDatabase(DocumentChunk[] chunks) returns error? {
+    log:printInfo("💾 Storing " + chunks.length().toString() + " chunks in database");
+
+    foreach DocumentChunk chunk in chunks {
+        log:printInfo("   - Storing chunk " + chunk.id + ": " + chunk.tokenCount.toString() + " tokens");
+
+        // Convert embedding array to pgvector format
+        string? embeddingVector = ();
+        decimal[]? embedding = chunk?.embedding;
+        if (embedding is decimal[]) {
+            // Convert decimal array to string format for pgvector: [1.0,2.0,3.0]
+            string embeddingStr = "[" +
+                string:'join(",", ...embedding.map(d => d.toString())) +
+                "]";
+            embeddingVector = embeddingStr;
+            log:printInfo("     ✅ Has embedding (" + embedding.length().toString() + " dimensions)");
+        } else {
+            log:printWarn("     ❌ No embedding for chunk " + chunk.id);
+        }
+
+        // Insert chunk into database
+        sql:ParameterizedQuery insertQuery;
+
+        if (embeddingVector is string) {
+            // Cast the string to vector type in PostgreSQL
+            insertQuery = `
+                INSERT INTO document_chunks (
+                    id, document_id, chunk_sequence, start_position, end_position,
+                    chunk_text, chunk_size, token_count, chunk_type, processing_status,
+                    relevance_score, context_keywords, embedding, created_at
+                ) VALUES (
+                    ${chunk.id}, ${chunk.documentId}, ${chunk.sequence}, 
+                    ${chunk.startPosition}, ${chunk.endPosition}, ${chunk.chunkText},
+                    ${chunk.chunkText.length()}, ${chunk.tokenCount}, ${chunk.chunkType},
+                    ${chunk.processingStatus}, ${chunk.relevanceScore}, ${chunk.keywords},
+                    ${embeddingVector}::vector, NOW()
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                    embedding = ${embeddingVector}::vector,
+                    processing_status = ${chunk.processingStatus},
+                    updated_at = NOW()
+            `;
+        } else {
+            // No embedding available
+            insertQuery = `
+                INSERT INTO document_chunks (
+                    id, document_id, chunk_sequence, start_position, end_position,
+                    chunk_text, chunk_size, token_count, chunk_type, processing_status,
+                    relevance_score, context_keywords, created_at
+                ) VALUES (
+                    ${chunk.id}, ${chunk.documentId}, ${chunk.sequence}, 
+                    ${chunk.startPosition}, ${chunk.endPosition}, ${chunk.chunkText},
+                    ${chunk.chunkText.length()}, ${chunk.tokenCount}, ${chunk.chunkType},
+                    ${chunk.processingStatus}, ${chunk.relevanceScore}, ${chunk.keywords},
+                    NOW()
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                    processing_status = ${chunk.processingStatus},
+                    updated_at = NOW()
+            `;
+        }
+
+        sql:ExecutionResult|sql:Error result = dbClient->execute(insertQuery);
+        if (result is sql:Error) {
+            log:printError("Failed to store chunk " + chunk.id + ": " + result.message());
+            return error("Failed to store chunk: " + result.message());
+        }
+    }
+
+    log:printInfo("✅ All chunks stored in database successfully");
+}
+
+// ============================================================================
+// Semantic Search Functions (Phase 6) - Placeholder
+// ============================================================================
+
+# Search for similar chunks using semantic search with pgvector
+#
+# + query - Search query text
+# + limit - Maximum number of results
+# + return - Array of search results or error
+function searchSimilarChunks(string query, int 'limit = 10) returns ChunkSearchResult[]|error {
+    log:printInfo("🔍 Performing semantic search for: " + query);
+    log:printInfo("   - Generating query embedding...");
+
+    // Generate embedding for the search query
+    decimal[]|error queryEmbedding = generateEmbedding(query);
+    if (queryEmbedding is error) {
+        log:printError("Failed to generate query embedding: " + queryEmbedding.message());
+        return error("Search failed: " + queryEmbedding.message());
+    }
+
+    log:printInfo("   - Query embedding generated: " + queryEmbedding.length().toString() + " dimensions");
+
+    // Convert query embedding to pgvector format
+    string queryVector = "[" +
+        string:'join(",", ...queryEmbedding.map(d => d.toString())) +
+        "]";
+
+    // Perform semantic search using pgvector cosine similarity
+    sql:ParameterizedQuery searchQuery = `
+        SELECT 
+            id, document_id, chunk_sequence as sequence, chunk_text,
+            relevance_score, chunk_type, context_keywords as keywords,
+            (1 - (embedding <=> ${queryVector}::vector)) as similarity_score
+        FROM document_chunks 
+        WHERE embedding IS NOT NULL
+        ORDER BY embedding <=> ${queryVector}::vector
+        LIMIT ${'limit}
+    `;
+
+    stream<record {}, sql:Error?> resultStream = dbClient->query(searchQuery);
+    ChunkSearchResult[] results = [];
+
+    error? e = resultStream.forEach(function(record {} row) {
+        // Convert row to ChunkSearchResult
+        ChunkSearchResult searchResult = {
+            id: <string>row["id"],
+            document_id: <string>row["document_id"],
+            sequence: <int>row["sequence"],
+            chunk_text: <string>row["chunk_text"],
+            relevance_score: <decimal>row["relevance_score"],
+            chunk_type: <string>row["chunk_type"],
+            keywords: <string[]>row["keywords"],
+            similarity_score: <decimal>row["similarity_score"]
+        };
+        results.push(searchResult);
+    });
+
+    if (e is error) {
+        log:printError("Error during search: " + e.message());
+        return error("Search query failed: " + e.message());
+    }
+
+    log:printInfo("✅ Search completed: " + results.length().toString() + " results found");
+    return results;
+}
+
+# Chunk search result type
+type ChunkSearchResult record {
+    string id;
+    string document_id;
+    int sequence;
+    string chunk_text;
+    decimal relevance_score;
+    string chunk_type;
+    string[] keywords;
+    decimal similarity_score;
+}; // Tokenizer service types
+
 type TokenizeRequest record {
     string text;
 };
@@ -649,8 +1058,9 @@ function getContentTypeSafe(handle extractionResult) returns string {
 #
 # + documentText - Extracted text from the document
 # + fileName - Original filename for context
+# + documentId - Pre-generated document ID to use
 # + return - Chunking result with created chunks and metadata
-function processDocumentChunking(string documentText, string fileName)
+function processDocumentChunking(string documentText, string fileName, string documentId)
     returns ChunkingResult|error {
 
     log:printInfo("🚀 Starting document chunking for: " + fileName);
@@ -661,9 +1071,7 @@ function processDocumentChunking(string documentText, string fileName)
         return error("Document text is empty for chunking");
     }
 
-    // Generate document ID
-    string documentId = generateDocumentId(fileName);
-    log:printInfo("🆔 Generated document ID: " + documentId);
+    log:printInfo("🆔 Using provided document ID: " + documentId);
 
     // Initialize chunking configuration
     ChunkConfig config = {
@@ -742,7 +1150,20 @@ function processDocumentChunking(string documentText, string fileName)
 # Generate a unique document ID
 function generateDocumentId(string fileName) returns string {
     time:Utc currentTime = time:utcNow();
-    string timestamp = currentTime.toString();
+    // Use Unix timestamp instead of string representation to avoid special characters
+    time:Civil epochCivil = {year: 1970, month: 1, day: 1, hour: 0, minute: 0, second: 0};
+    time:Utc|time:Error epochUtc = time:utcFromCivil(epochCivil);
+
+    decimal unixTimestamp;
+    if (epochUtc is time:Utc) {
+        unixTimestamp = time:utcDiffSeconds(currentTime, epochUtc);
+    } else {
+        // Fallback: use current time nanoseconds
+        unixTimestamp = <decimal>currentTime[0];
+    }
+
+    string timestamp = unixTimestamp.toString();
+
     string cleanFileName = fileName.toLowerAscii();
 
     // Remove file extension
@@ -755,8 +1176,14 @@ function generateDocumentId(string fileName) returns string {
     cleanFileName = replaceStringSimple(cleanFileName, " ", "_");
     cleanFileName = replaceStringSimple(cleanFileName, "-", "_");
     cleanFileName = replaceStringSimple(cleanFileName, ".", "_");
+    cleanFileName = replaceStringSimple(cleanFileName, "[", "_");
+    cleanFileName = replaceStringSimple(cleanFileName, "]", "_");
+    cleanFileName = replaceStringSimple(cleanFileName, ",", "_");
+    cleanFileName = replaceStringSimple(cleanFileName, "(", "_");
+    cleanFileName = replaceStringSimple(cleanFileName, ")", "_");
 
-    return "doc_" + cleanFileName + "_" + timestamp.substring(0, 19);
+    // Use only safe characters for storage path
+    return "doc_" + cleanFileName + "_" + timestamp.substring(0, 10);
 }
 
 # Create semantic chunks from document text
@@ -1242,19 +1669,56 @@ service /api/v1/documents on httpListener {
 
             // Step 3: Process chunking with the extracted text
             log:printInfo("Step 3: Processing document chunking");
-            ChunkingResult chunkingResult = check processDocumentChunking(extractionResult.extractedText, filename);
 
-            // Step 4: Prepare processing results with chunking
-            log:printInfo("Document processing completed successfully");
+            // Generate document ID first (before chunking)
+            string documentId = generateDocumentId(filename);
+
+            ChunkingResult chunkingResult = check processDocumentChunking(extractionResult.extractedText, filename, documentId);
+
+            // Step 4: Store file and data (Phase 6)
+            log:printInfo("Step 4: Storing file and processing data");
+
+            // Upload file to Supabase Storage
+            string|error storagePath = uploadFileToSupabase(fileContent, filename, documentId);
+            string actualStoragePath = "";
+            if (storagePath is error) {
+                log:printWarn("Failed to upload file to storage: " + storagePath.message());
+                actualStoragePath = "storage_failed";
+            } else {
+                actualStoragePath = storagePath;
+                log:printInfo("✅ File uploaded to storage: " + actualStoragePath);
+            }
+
+            // Store document metadata
+            error? metadataResult = storeDocumentMetadata(documentId, filename, actualStoragePath, chunkingResult);
+            if (metadataResult is error) {
+                log:printWarn("Failed to store document metadata: " + metadataResult.message());
+            }
+
+            // Store chunks in database
+            error? chunksResult = storeChunksInDatabase(chunkingResult.chunks);
+            if (chunksResult is error) {
+                log:printWarn("Failed to store chunks: " + chunksResult.message());
+            }
+
+            // Step 5: Prepare processing results with storage information
+            log:printInfo("Document processing and storage completed successfully");
             json result = {
                 "success": true,
-                "message": "Document processed successfully",
+                "message": "Document processed and stored successfully",
                 "document": {
+                    "id": documentId,
                     "filename": filename,
                     "size": fileContent.length(),
                     "type": fileExtension,
                     "contentType": actualContentType,
                     "processedAt": time:utcNow()
+                },
+                "storage": {
+                    "storagePath": actualStoragePath,
+                    "storageUrl": actualStoragePath != "storage_failed" ? generateFileURL(actualStoragePath) : (),
+                    "bucket": SUPABASE_STORAGE_BUCKET,
+                    "stored": actualStoragePath != "storage_failed"
                 },
                 "extraction": {
                     "totalPages": extractionResult.totalPages,
@@ -1323,6 +1787,91 @@ service /api/v1/documents on httpListener {
                 body: {
                     "error": "Processing failed",
                     "message": "An error occurred while processing the document",
+                    "details": e.message()
+                }
+            };
+        }
+    }
+
+    # Search for similar content using semantic search (Phase 6)
+    # + request - HTTP request containing search query
+    # + return - Search results or error
+    resource function post search(http:Request request) returns json|http:BadRequest|http:InternalServerError {
+        do {
+            log:printInfo("Processing semantic search request");
+
+            json payload = check request.getJsonPayload();
+
+            // Extract query parameter
+            json|error queryJson = payload.query;
+            if (queryJson is error || !(queryJson is string)) {
+                return <http:BadRequest>{
+                    body: {
+                        "error": "Invalid query",
+                        "message": "Query parameter is required and must be a string"
+                    }
+                };
+            }
+            string query = <string>queryJson;
+
+            // Extract limit parameter
+            int 'limit = 10; // default limit
+            json|error limitJson = payload.'limit;
+            if (limitJson is int) {
+                'limit = <int>limitJson;
+                if ('limit <= 0 || 'limit > 50) {
+                    'limit = 10; // reset to default if invalid
+                }
+            }
+
+            // Perform semantic search
+            ChunkSearchResult[]|error searchResults = searchSimilarChunks(query, 'limit);
+
+            if (searchResults is error) {
+                log:printError("Search failed: " + searchResults.message());
+                return <http:InternalServerError>{
+                    body: {
+                        "error": "Search failed",
+                        "message": searchResults.message()
+                    }
+                };
+            }
+
+            // Prepare response
+            json response = {
+                "success": true,
+                "query": query,
+                "limit": 'limit,
+                "totalResults": searchResults.length(),
+                "results": searchResults.map(searchResult => <json>{
+                    "chunkId": searchResult.id,
+                    "documentId": searchResult.document_id,
+                    "sequence": searchResult.sequence,
+                    "similarity": searchResult.similarity_score,
+                    "relevance": searchResult.relevance_score,
+                    "chunkType": searchResult.chunk_type,
+                    "keywords": searchResult.keywords,
+                    "text": searchResult.chunk_text.length() > 500 ?
+                        searchResult.chunk_text.substring(0, 500) + "..." :
+                        searchResult.chunk_text,
+                    "textLength": searchResult.chunk_text.length()
+                }),
+                "searchMetadata": {
+                    "searchType": "semantic_similarity",
+                    "embeddingModel": GEMINI_EMBEDDING_MODEL,
+                    "embeddingDimensions": GEMINI_EMBEDDING_DIMENSIONS,
+                    "timestamp": time:utcNow()
+                }
+            };
+
+            return response;
+
+        } on fail error e {
+            log:printError("Error processing search: " + e.message());
+            return <http:InternalServerError>{
+                body: {
+                    "error": "Search processing failed",
+                    "message": "An error occurred while processing the search request",
                     "details": e.message()
                 }
             };
