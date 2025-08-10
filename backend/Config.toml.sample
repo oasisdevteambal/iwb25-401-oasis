@@ -1,0 +1,19 @@
+# Ballerina Configuration File
+# Copy this file to Config.toml in the same directory as Ballerina.toml
+
+[oasis.backend]
+# Google Gemini API Configuration
+GEMINI_API_KEY = "AIzaSyBn6yGwy4qFCftrlcN_OMFKkRX6m_e8ibA"
+
+# Tokenizer Service Configuration (for local development)
+TOKENIZER_SERVICE_URL = "http://localhost:3001"
+
+# Supabase Configuration (optional - for vector storage)
+SUPABASE_URL = "https://ohdbwbrutlwikcmpprky.supabase.co"
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9oZGJ3YnJ1dGx3aWtjbXBwcmt5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQxMzUyNzQsImV4cCI6MjA2OTcxMTI3NH0.t_H3kE7fliAXbjp8BFQIeS0i_orI-OYhbvQxsL65rW4"
+SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9oZGJ3YnJ1dGx3aWtjbXBwcmt5Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NDEzNTI3NCwiZXhwIjoyMDY5NzExMjc0fQ.BDM2DyLfQ3PcJs_9LLQenN8A73TKCIbGjpLMv4WWs9o"
+
+# Application Settings
+HTTP_PORT = 8080
+LOG_LEVEL = "INFO"
+MAX_FILE_SIZE_MB = 10
