@@ -6,6 +6,7 @@ import ballerina/mime;
 import ballerina/sql;
 import ballerina/time;
 import ballerinax/postgresql;
+import ballerinax/postgresql.driver as _; // Include PostgreSQL JDBC driver
 
 // Phase 6: Vector Storage & Database Persistence Implementation
 
@@ -17,6 +18,16 @@ import ballerinax/postgresql;
 configurable string SUPABASE_URL = "https://ohdbwbrutlwikcmpprky.supabase.co";
 configurable string SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9oZGJ3YnJ1dGx3aWtjbXBwcmt5Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NDEzNTI3NCwiZXhwIjoyMDY5NzExMjc0fQ.BDM2DyLfQ3PcJs_9LLQenN8A73TKCIbGjpLMv4WWs9o";
 configurable string SUPABASE_STORAGE_BUCKET = "documents";
+
+// Logging / diagnostics configuration
+configurable boolean DEBUG_LOGS = false; // Set to true to enable verbose debug logging
+
+// Lightweight debug helper (avoids repeating conditional)
+function logDebug(string msg) {
+    if (DEBUG_LOGS) {
+        log:printInfo("DEBUG: " + msg);
+    }
+}
 
 // Database Configuration
 configurable string SUPABASE_DB_HOST = "db.ohdbwbrutlwikcmpprky.supabase.co";
@@ -88,11 +99,12 @@ postgresql:Client dbClient = check new (
 #
 # + return - Success message or error
 function initializeDatabaseConnection() returns string|error {
-    // Test the connection
-    sql:ExecutionResult|sql:Error result = dbClient->execute(`SELECT 1 as test`);
-    if (result is sql:Error) {
-        log:printError("Failed to connect to database: " + result.message());
-        return error("Database connection failed: " + result.message());
+    // Test the connection using query instead of execute
+    stream<record {}, sql:Error?> result = dbClient->query(`SELECT 1 as test`);
+    error? closeError = result.close();
+    if (closeError is error) {
+        log:printError("Failed to connect to database: " + closeError.message());
+        return error("Database connection failed: " + closeError.message());
     }
 
     log:printInfo("✅ Database connection established successfully");
@@ -333,10 +345,10 @@ function storeChunksInDatabase(DocumentChunk[] chunks) returns error? {
                     ${chunk.startPosition}, ${chunk.endPosition}, ${chunk.chunkText},
                     ${chunk.chunkText.length()}, ${chunk.tokenCount}, ${chunk.chunkType},
                     ${chunk.processingStatus}, ${chunk.relevanceScore}, ${chunk.keywords},
-                    ${embeddingVector}::vector, NOW()
+                    ${embeddingVector}::vector(768), NOW()
                 )
                 ON CONFLICT (id) DO UPDATE SET
-                    embedding = ${embeddingVector}::vector,
+                    embedding = ${embeddingVector}::vector(768),
                     processing_status = ${chunk.processingStatus},
                     updated_at = NOW()
             `;
@@ -374,6 +386,34 @@ function storeChunksInDatabase(DocumentChunk[] chunks) returns error? {
 // Semantic Search Functions (Phase 6) - Placeholder
 // ============================================================================
 
+# Simple comma splitter (avoids dependency on unavailable string:split)
+function splitComma(string s) returns string[] {
+    string[] parts = [];
+    string current = "";
+    string trimmedAll = s.trim();
+    int len = trimmedAll.length();
+    int i = 0;
+    while (i < len) {
+        // Extract single-character substring
+        string ch = trimmedAll.substring(i, i + 1);
+        if (ch == ",") {
+            string trimmed = current.trim();
+            if (trimmed.length() > 0) {
+                parts.push(trimmed);
+            }
+            current = "";
+        } else {
+            current += ch;
+        }
+        i += 1;
+    }
+    string last = current.trim();
+    if (last.length() > 0) {
+        parts.push(last);
+    }
+    return parts;
+}
+
 # Search for similar chunks using semantic search with pgvector
 #
 # + query - Search query text
@@ -381,7 +421,7 @@ function storeChunksInDatabase(DocumentChunk[] chunks) returns error? {
 # + return - Array of search results or error
 function searchSimilarChunks(string query, int 'limit = 10) returns ChunkSearchResult[]|error {
     log:printInfo("🔍 Performing semantic search for: " + query);
-    log:printInfo("   - Generating query embedding...");
+    logDebug("Generating query embedding...");
 
     // Generate embedding for the search query
     decimal[]|error queryEmbedding = generateEmbedding(query);
@@ -390,30 +430,111 @@ function searchSimilarChunks(string query, int 'limit = 10) returns ChunkSearchR
         return error("Search failed: " + queryEmbedding.message());
     }
 
-    log:printInfo("   - Query embedding generated: " + queryEmbedding.length().toString() + " dimensions");
+    logDebug("Query embedding generated: " + queryEmbedding.length().toString() + " dimensions");
 
     // Convert query embedding to pgvector format
+    logDebug("Converting embedding to pgvector format...");
     string queryVector = "[" +
         string:'join(",", ...queryEmbedding.map(d => d.toString())) +
         "]";
+    logDebug("Query vector prepared, length: " + queryVector.length().toString());
+    if (DEBUG_LOGS) {
+        log:printInfo("DEBUG: Query vector first 100 chars: " + queryVector.substring(0, 100 < queryVector.length() ? 100 : queryVector.length()));
+        log:printInfo("DEBUG: Query vector last 50 chars: " + queryVector.substring(queryVector.length() - 50 > 0 ? queryVector.length() - 50 : 0));
+    }
 
-    // Perform semantic search using pgvector cosine similarity
+    // REAL DATABASE SEARCH: Now enabled after fixing Java classpath conflicts
+    logDebug("Preparing SQL query...");
+
+    // First test: Try a simple query without vector operations
+    logDebug("Testing simple query first...");
+    stream<record {}, sql:Error?> simpleTestStream = dbClient->query(`
+        SELECT id, chunk_text, embedding IS NOT NULL as has_embedding 
+        FROM document_chunks 
+        LIMIT 1
+    `);
+
+    int simpleRowCount = 0;
+    error? simpleError = simpleTestStream.forEach(function(record {} row) {
+        simpleRowCount += 1;
+        logDebug("Simple query row - id: " + <string>row["id"]);
+        logDebug("Simple query row - has_embedding: " + (<boolean>row["has_embedding"]).toString());
+        logDebug("Simple query row - text length: " + (<string>row["chunk_text"]).length().toString());
+    });
+
+    if (simpleError is error) {
+        log:printError("🔧 DEBUG: Simple query failed: " + simpleError.message());
+        return error("Simple query failed: " + simpleError.message());
+    }
+
+    logDebug("Simple query returned " + simpleRowCount.toString() + " rows");
+
+    if (simpleRowCount == 0) {
+        log:printError("No chunks found in database at all!");
+        return error("No document chunks found in database");
+    }
+
+    // Build similarity search fetching a broader set WITHOUT ORDER BY (driver seems to drop rows when ORDER BY uses large vector twice)
+    int fetchSize = 'limit * 10; // over-fetch then sort in memory
+    if (fetchSize < 50) {
+        fetchSize = 50;
+    }
+    logDebug("Building unsorted similarity fetch (fetchSize=" + fetchSize.toString() + ")...");
     sql:ParameterizedQuery searchQuery = `
         SELECT 
-            id, document_id, chunk_sequence as sequence, chunk_text,
-            relevance_score, chunk_type, context_keywords as keywords,
-            (1 - (embedding <=> ${queryVector}::vector)) as similarity_score
+            id, 
+            document_id, 
+            chunk_sequence AS sequence, 
+            chunk_text, 
+            relevance_score, 
+            chunk_type, 
+            context_keywords AS keywords, 
+            (embedding <=> ${queryVector}::vector(768)) AS distance 
         FROM document_chunks 
-        WHERE embedding IS NOT NULL
-        ORDER BY embedding <=> ${queryVector}::vector
-        LIMIT ${'limit}
+        WHERE embedding IS NOT NULL 
+        LIMIT ${fetchSize}
     `;
-
+    logDebug("Unsorted similarity fetch query built; executing...");
     stream<record {}, sql:Error?> resultStream = dbClient->query(searchQuery);
+    logDebug("Unsorted fetch executed; processing result stream...");
+
     ChunkSearchResult[] results = [];
+    int rowCount = 0;
 
     error? e = resultStream.forEach(function(record {} row) {
+        rowCount += 1;
+        logDebug("Processing row " + rowCount.toString());
+
+        // Log the raw row data for debugging
+        logDebug("Row data - id: " + <string>row["id"]);
+        // Convert distance to similarity (1 - distance);
+        decimal distance = <decimal>row["distance"];
+        decimal similarity = 1 - distance;
+        logDebug("Row data - distance: " + distance.toString() + " similarity: " + similarity.toString());
+        logDebug("Row data - chunk_text length: " + (<string>row["chunk_text"]).length().toString());
+
         // Convert row to ChunkSearchResult
+        // keywords column may be NULL; guard the cast
+        string[] kw = [];
+        var kwRaw = row["keywords"];
+        if (kwRaw is string[]) {
+            kw = kwRaw;
+        } else if (kwRaw is string) { // handle comma-separated or Postgres array format
+            string temp = kwRaw.trim();
+            // Strip Postgres array braces {a,b,c}
+            if (temp.startsWith("{") && temp.endsWith("}")) {
+                temp = temp.substring(1, temp.length() - 1);
+            }
+            if (temp.length() > 0) {
+                string[] parts = splitComma(temp);
+                foreach var p in parts {
+                    string cleaned = p.trim();
+                    if (cleaned.length() > 0) {
+                        kw.push(cleaned);
+                    }
+                }
+            }
+        }
         ChunkSearchResult searchResult = {
             id: <string>row["id"],
             document_id: <string>row["document_id"],
@@ -421,19 +542,107 @@ function searchSimilarChunks(string query, int 'limit = 10) returns ChunkSearchR
             chunk_text: <string>row["chunk_text"],
             relevance_score: <decimal>row["relevance_score"],
             chunk_type: <string>row["chunk_type"],
-            keywords: <string[]>row["keywords"],
-            similarity_score: <decimal>row["similarity_score"]
+            keywords: kw,
+            similarity_score: similarity
         };
         results.push(searchResult);
+        logDebug("Successfully added result to array");
     });
 
     if (e is error) {
+        log:printError("🔧 DEBUG: Error during result processing: " + e.message());
         log:printError("Error during search: " + e.message());
         return error("Search query failed: " + e.message());
     }
 
-    log:printInfo("✅ Search completed: " + results.length().toString() + " results found");
+    logDebug("Result processing completed successfully");
+    logDebug("Total unsorted rows processed: " + rowCount.toString());
+    // Sort results by similarity descending using query expression (avoids method overload issues)
+    ChunkSearchResult[] sorted = from ChunkSearchResult r in results
+        order by r.similarity_score descending
+        select r;
+    results = sorted;
+    // Trim to requested limit
+    if (results.length() > 'limit) {
+        results = results.slice(0, 'limit);
+    }
+    logDebug("Results after in-memory sort & trim: " + results.length().toString());
+    log:printInfo("✅ Search completed (in-memory sorted): " + results.length().toString() + " results returned");
+
+    // If no rows, run staged diagnostic queries to narrow down failure point
+    if (results.length() == 0) {
+        logDebug("Similarity query returned zero rows. Running staged diagnostics...");
+
+        // Stage 1: Baseline count
+        stream<record {}, sql:Error?> countStream = dbClient->query(`SELECT COUNT(*) AS cnt FROM document_chunks WHERE embedding IS NOT NULL`);
+        error? countErr = countStream.forEach(function(record {} r) {
+            logDebug("Stage1 COUNT embedding IS NOT NULL = " + (<int>r["cnt"]).toString());
+        });
+        if (countErr is error) {
+            log:printError("Stage1 count failed: " + countErr.message());
+        }
+
+        // Stage 2: Fetch rows without similarity expression
+        stream<record {}, sql:Error?> stage2 = dbClient->query(`
+            SELECT id, document_id, chunk_sequence AS sequence, chunk_text
+            FROM document_chunks
+            WHERE embedding IS NOT NULL
+            LIMIT 5
+        `);
+        int stage2Count = 0;
+        error? stage2Err = stage2.forEach(function(record {} r) {
+            stage2Count += 1;
+            logDebug("Stage2 row id=" + <string>r["id"]);
+        });
+        if (stage2Err is error) {
+            log:printError("Stage2 basic fetch failed: " + stage2Err.message());
+        }
+        logDebug("Stage2 fetched rows: " + stage2Count.toString());
+
+        // Stage 3: Add similarity expression in SELECT only
+        sql:ParameterizedQuery stage3Query = `
+            SELECT id, (embedding <=> ${queryVector}::vector(768)) AS distance
+            FROM document_chunks
+            WHERE embedding IS NOT NULL
+            LIMIT 5
+        `;
+        stream<record {}, sql:Error?> stage3 = dbClient->query(stage3Query);
+        int stage3Count = 0;
+        error? stage3Err = stage3.forEach(function(record {} r) {
+            stage3Count += 1;
+            logDebug("Stage3 row id=" + <string>r["id"] + " distance=" + (<decimal>r["distance"]).toString());
+        });
+        if (stage3Err is error) {
+            log:printError("Stage3 similarity select failed: " + stage3Err.message());
+        }
+        logDebug("Stage3 fetched rows: " + stage3Count.toString());
+
+        // Stage 4: ORDER BY using CTE to reference vector once
+        if (stage3Count > 0) {
+            sql:ParameterizedQuery stage4Query = `
+                WITH q AS (SELECT ${queryVector}::vector(768) AS qv)
+                SELECT dc.id, (dc.embedding <=> q.qv) AS distance
+                FROM document_chunks dc, q
+                WHERE dc.embedding IS NOT NULL
+                ORDER BY dc.embedding <=> q.qv
+                LIMIT 5
+            `;
+            stream<record {}, sql:Error?> stage4 = dbClient->query(stage4Query);
+            int stage4Count = 0;
+            error? stage4Err = stage4.forEach(function(record {} r) {
+                stage4Count += 1;
+                logDebug("Stage4 row id=" + <string>r["id"] + " distance=" + (<decimal>r["distance"]).toString());
+            });
+            if (stage4Err is error) {
+                log:printError("Stage4 ORDER BY similarity (CTE) failed: " + stage4Err.message());
+            }
+            logDebug("Stage4 fetched rows: " + stage4Count.toString());
+        } else {
+            logDebug("Skipping Stage4 because Stage3 returned zero rows");
+        }
+    }
     return results;
+
 }
 
 # Chunk search result type
@@ -1510,6 +1719,207 @@ service /api/v1/documents on httpListener {
                 body: {
                     "success": false,
                     "error": "Test failed",
+                    "message": e.message()
+                }
+            };
+        }
+    }
+
+    # Debug endpoint to check database contents
+    # + return - Database statistics and sample data
+    resource function get debug\-db() returns json|http:InternalServerError {
+        do {
+            log:printInfo("🔧 DEBUG: Checking database contents...");
+
+            // Count documents
+            stream<record {}, sql:Error?> docCountStream = dbClient->query(`SELECT COUNT(*) as doc_count FROM documents`);
+            int docCount = 0;
+            error? docCountError = docCountStream.forEach(function(record {} row) {
+                docCount = <int>row["doc_count"];
+            });
+            if (docCountError is error) {
+                log:printError("Failed to count documents: " + docCountError.message());
+            }
+
+            // Count document chunks
+            stream<record {}, sql:Error?> chunkCountStream = dbClient->query(`SELECT COUNT(*) as chunk_count FROM document_chunks`);
+            int chunkCount = 0;
+            error? chunkCountError = chunkCountStream.forEach(function(record {} row) {
+                chunkCount = <int>row["chunk_count"];
+            });
+            if (chunkCountError is error) {
+                log:printError("Failed to count chunks: " + chunkCountError.message());
+            }
+
+            // Count chunks with embeddings
+            stream<record {}, sql:Error?> embeddedCountStream = dbClient->query(`SELECT COUNT(*) as embedded_count FROM document_chunks WHERE embedding IS NOT NULL`);
+            int embeddedCount = 0;
+            error? embeddedCountError = embeddedCountStream.forEach(function(record {} row) {
+                embeddedCount = <int>row["embedded_count"];
+            });
+            if (embeddedCountError is error) {
+                log:printError("Failed to count embedded chunks: " + embeddedCountError.message());
+            }
+
+            // Get sample chunk data
+            stream<record {}, sql:Error?> sampleStream = dbClient->query(`SELECT id, chunk_text, chunk_type, relevance_score, embedding IS NOT NULL as has_embedding FROM document_chunks LIMIT 1`);
+            json[] sampleChunks = [];
+            error? sampleError = sampleStream.forEach(function(record {} row) {
+                json chunk = {
+                    "id": <string>row["id"],
+                    "text_preview": (<string>row["chunk_text"]).length() > 100 ?
+                        (<string>row["chunk_text"]).substring(0, 100) + "..." :
+                        <string>row["chunk_text"],
+                    "chunk_type": <string>row["chunk_type"],
+                    "relevance_score": <decimal>row["relevance_score"],
+                    "has_embedding": <boolean>row["has_embedding"]
+                };
+                sampleChunks.push(chunk);
+            });
+            if (sampleError is error) {
+                log:printError("Failed to get sample chunks: " + sampleError.message());
+            }
+
+            return {
+                "success": true,
+                "database_stats": {
+                    "documents_count": docCount,
+                    "chunks_count": chunkCount,
+                    "embedded_chunks_count": embeddedCount,
+                    "embedding_coverage": chunkCount > 0 ? (embeddedCount * 100.0 / chunkCount) : 0.0
+                },
+                "sample_chunks": sampleChunks,
+                "database_connection": "OK"
+            };
+
+        } on fail error e {
+            log:printError("Database debug check failed: " + e.message());
+            return <http:InternalServerError>{
+                body: {
+                    "success": false,
+                    "error": "Database debug check failed",
+                    "message": e.message()
+                }
+            };
+        }
+    }
+
+    # Search for tax-related content using semantic search
+    # + query - Search query text (required)
+    # + 'limit - Maximum number of results to return (optional, default: 10)
+    # + minSimilarity - Minimum similarity score threshold (optional, default: 0.3)
+    # + return - Search results with similarity scores or error
+    resource function get search(string query, int? 'limit, decimal? minSimilarity)
+        returns json|http:BadRequest|http:InternalServerError {
+
+        do {
+            // Validate required query parameter
+            if (query.trim().length() == 0) {
+                return <http:BadRequest>{
+                    body: {
+                        "success": false,
+                        "error": "Query parameter is required and cannot be empty",
+                        "message": "Please provide a search query"
+                    }
+                };
+            }
+
+            // Set defaults
+            int searchLimit = 'limit ?: 10;
+            decimal similarityThreshold = minSimilarity ?: 0.3d;
+
+            // Validate parameters
+            if (searchLimit < 1 || searchLimit > 50) {
+                return <http:BadRequest>{
+                    body: {
+                        "success": false,
+                        "error": "Invalid limit parameter",
+                        "message": "Limit must be between 1 and 50"
+                    }
+                };
+            }
+
+            if (similarityThreshold < 0.0d || similarityThreshold > 1.0d) {
+                return <http:BadRequest>{
+                    body: {
+                        "success": false,
+                        "error": "Invalid similarity threshold",
+                        "message": "Similarity threshold must be between 0.0 and 1.0"
+                    }
+                };
+            }
+
+            log:printInfo("🔍 Search request: query='" + query + "', limit=" + searchLimit.toString() +
+                        ", threshold=" + similarityThreshold.toString());
+
+            // Perform semantic search
+            ChunkSearchResult[]|error searchResults = searchSimilarChunks(query, searchLimit);
+
+            if (searchResults is error) {
+                log:printError("Search failed: " + searchResults.message());
+                return <http:InternalServerError>{
+                    body: {
+                        "success": false,
+                        "error": "Search operation failed",
+                        "message": searchResults.message()
+                    }
+                };
+            }
+
+            // Filter results by similarity threshold
+            ChunkSearchResult[] filteredResults = [];
+            foreach ChunkSearchResult result in searchResults {
+                if (result.similarity_score >= similarityThreshold) {
+                    filteredResults.push(result);
+                }
+            }
+
+            // Convert results to response format
+            json[] formattedResults = [];
+            foreach ChunkSearchResult result in filteredResults {
+                string displayText = result.chunk_text.length() > 500 ?
+                    result.chunk_text.substring(0, 500) + "..." :
+                    result.chunk_text;
+                string preview = result.chunk_text.length() > 150 ?
+                    result.chunk_text.substring(0, 150) + "..." :
+                    result.chunk_text;
+
+                json resultItem = {
+                    "id": result.id,
+                    "documentId": result.document_id,
+                    "sequence": result.sequence,
+                    "chunkType": result.chunk_type,
+                    "similarityScore": result.similarity_score,
+                    "relevanceScore": result.relevance_score,
+                    "keywords": result.keywords,
+                    "text": displayText,
+                    "fullTextLength": result.chunk_text.length(),
+                    "preview": preview
+                };
+                formattedResults.push(resultItem);
+            }
+
+            // Prepare response with metadata
+            return {
+                "success": true,
+                "query": query,
+                "totalResults": filteredResults.length(),
+                "limit": searchLimit,
+                "similarityThreshold": similarityThreshold,
+                "searchMetadata": {
+                    "searchTime": time:utcNow().toString(),
+                    "embeddingModel": GEMINI_EMBEDDING_MODEL,
+                    "embeddingDimensions": GEMINI_EMBEDDING_DIMENSIONS
+                },
+                "results": formattedResults
+            };
+
+        } on fail error e {
+            log:printError("Error in search endpoint: " + e.message());
+            return <http:InternalServerError>{
+                body: {
+                    "success": false,
+                    "error": "Search request failed",
                     "message": e.message()
                 }
             };
