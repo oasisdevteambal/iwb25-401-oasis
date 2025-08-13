@@ -327,7 +327,7 @@ function storeChunksInDatabase(DocumentChunk[] chunks) returns error? {
             embeddingVector = embeddingStr;
             log:printInfo("     ✅ Has embedding (" + embedding.length().toString() + " dimensions)");
         } else {
-            log:printWarn("     ❌ No embedding for chunk " + chunk.id);
+            return error("Missing embedding for chunk " + chunk.id);
         }
 
         // Insert chunk into database
@@ -404,6 +404,24 @@ type ParsedBracket record {
     int bracketOrder;
     string sourceLine;
 };
+
+// Build a compact text used to generate embeddings for a rule
+// Prefer parsed brackets when available; otherwise can use ruleData JSON
+function buildRuleEmbeddingText(string title, string description,
+        ParsedBracket[] parsed) returns string {
+    string text = title + " — " + description;
+
+    int i = 1;
+    foreach ParsedBracket b in parsed {
+        string minS = b.minIncome is decimal ? (<decimal>b.minIncome).toString() : "0";
+        string maxS = b.maxIncome is decimal ? (<decimal>b.maxIncome).toString() : "∞";
+        string fixS = b.fixedAmount is decimal ? (" + LKR " + (<decimal>b.fixedAmount).toString()) : "";
+        text += "\nBracket " + i.toString() + ": Income " + minS + " to " + maxS +
+            " taxed at " + b.ratePercent.toString() + "%" + fixS;
+        i += 1;
+    }
+    return text;
+}
 
 // Extract tax rules from provided chunks and persist into tax_rules and tax_brackets
 // documentId - The source document ID
@@ -492,6 +510,32 @@ function extractTaxRulesForDocument(string documentId, DocumentChunk[] chunks)
             continue;
         }
         rulesInserted += 1; // counts affected rules (upsert)
+
+        // Generate and persist rule embedding (no fallback; fail on error)
+        string embedText = buildRuleEmbeddingText(title, description, parsed);
+        decimal[] ruleEmb = check generateEmbedding(embedText);
+
+        // Convert embedding to pgvector string literal
+        string embStr = "[";
+        int idx = 0;
+        foreach decimal v in ruleEmb {
+            if (idx > 0) {
+                embStr += ",";
+            }
+            embStr += v.toString();
+            idx += 1;
+        }
+        embStr += "]";
+
+        sql:ParameterizedQuery updateEmb = `
+            UPDATE tax_rules
+            SET embedding = ${embStr}::vector(768), updated_at = NOW()
+            WHERE id = ${ruleId}
+        `;
+        sql:ExecutionResult|sql:Error embRes = dbClient->execute(updateEmb);
+        if (embRes is sql:Error) {
+            return error("Failed to update rule embedding: " + embRes.message());
+        }
 
         // Upsert brackets for this rule
         int brOrder = 1;
@@ -709,7 +753,7 @@ function sanitizeId(string s) returns string {
 // Semantic Search Functions (Phase 6) - Placeholder
 // ============================================================================
 
-# Simple comma splitter (avoids dependency on unavailable string:split)
+// Simple comma splitter (avoids dependency on unavailable string:split)
 function splitComma(string s) returns string[] {
     string[] parts = [];
     string current = "";
@@ -1069,26 +1113,21 @@ function getTokenCount(string text) returns int|error {
     http:Response|error response = tokenizerClient->post("/tokenize", request);
 
     if (response is error) {
-        log:printError("Failed to call tokenizer service: " + response.message());
-        // Fallback to simple estimation
-        return estimateTokensFallback(text);
+        return error("Tokenizer service call failed: " + response.message());
     }
 
     json|error payload = response.getJsonPayload();
     if (payload is error) {
-        log:printError("Failed to parse tokenizer response: " + payload.message());
-        return estimateTokensFallback(text);
+        return error("Tokenizer response parse failed: " + payload.message());
     }
 
     TokenizeResponse|error tokenResponse = payload.cloneWithType(TokenizeResponse);
     if (tokenResponse is error) {
-        log:printError("Failed to convert tokenizer response: " + tokenResponse.message());
-        return estimateTokensFallback(text);
+        return error("Tokenizer response conversion failed: " + tokenResponse.message());
     }
 
     if (!tokenResponse.success) {
-        log:printError("Tokenizer service returned error");
-        return estimateTokensFallback(text);
+        return error("Tokenizer service returned error");
     }
 
     return tokenResponse.tokenCount;
@@ -1108,65 +1147,35 @@ function getBatchTokenCounts(string[] texts) returns int[]|error {
     http:Response|error response = tokenizerClient->post("/tokenize/batch", request);
 
     if (response is error) {
-        log:printError("Failed to call tokenizer batch service: " + response.message());
-        // Fallback to individual estimations
-        int[] counts = [];
-        foreach string text in texts {
-            counts.push(estimateTokensFallback(text));
-        }
-        return counts;
+        return error("Batch tokenizer service call failed: " + response.message());
     }
 
     json|error payload = response.getJsonPayload();
     if (payload is error) {
-        log:printError("Failed to parse batch tokenizer response: " + payload.message());
-        int[] counts = [];
-        foreach string text in texts {
-            counts.push(estimateTokensFallback(text));
-        }
-        return counts;
+        return error("Batch tokenizer response parse failed: " + payload.message());
     }
 
     BatchTokenizeResponse|error batchResponse = payload.cloneWithType(BatchTokenizeResponse);
     if (batchResponse is error) {
-        log:printError("Failed to convert batch tokenizer response: " + batchResponse.message());
-        int[] counts = [];
-        foreach string text in texts {
-            counts.push(estimateTokensFallback(text));
-        }
-        return counts;
+        return error("Batch tokenizer response conversion failed: " + batchResponse.message());
     }
 
     if (!batchResponse.success) {
-        log:printError("Batch tokenizer service returned error");
-        int[] counts = [];
-        foreach string text in texts {
-            counts.push(estimateTokensFallback(text));
-        }
-        return counts;
+        return error("Batch tokenizer service returned error");
     }
 
     int[] tokenCounts = [];
     foreach var result in batchResponse.results {
-        if (result.success) {
-            tokenCounts.push(result.tokenCount);
-        } else {
-            log:printWarn("Failed to tokenize text at index " + result.index.toString() + ": " + (result.errorMessage ?: "unknown error"));
-            tokenCounts.push(estimateTokensFallback(texts[result.index]));
+        if (!result.success) {
+            return error("Batch tokenization failed at index " + result.index.toString() + ": " + (result.errorMessage ?: "unknown error"));
         }
+        tokenCounts.push(result.tokenCount);
     }
 
     return tokenCounts;
 }
 
-# Fallback token estimation function (original simple estimation)
-#
-# + text - The text to estimate tokens for
-# + return - Estimated token count
-function estimateTokensFallback(string text) returns int {
-    // Rough estimation: 1 token ≈ 3-4 characters for technical content
-    return text.length() / 3;
-}
+// Removed fallback token estimation for strict accuracy requirements
 
 // ============================================================================
 // Embedding Service Functions (Google Gemini)
@@ -1642,7 +1651,7 @@ function processDocumentChunking(string documentText, string fileName, string do
     string[] warnings = [];
 
     // Step 1: Create semantic chunks
-    DocumentChunk[] chunks = createSemanticChunks(documentText, documentId, config);
+    DocumentChunk[] chunks = check createSemanticChunks(documentText, documentId, config);
 
     // Step 2: Add relevance scoring
     DocumentChunk[] scoredChunks = addTaxRelevanceScoring(chunks, config);
@@ -1652,21 +1661,12 @@ function processDocumentChunking(string documentText, string fileName, string do
 
     // Step 4: Generate embeddings for chunks
     log:printInfo("🔮 Starting embedding generation for " + validatedChunks.length().toString() + " chunks");
-    DocumentChunk[]|error embeddedChunksResult = generateChunkEmbeddings(validatedChunks);
-
-    DocumentChunk[] finalChunks;
-    if (embeddedChunksResult is error) {
-        log:printWarn("Failed to generate embeddings: " + embeddedChunksResult.message() + ". Proceeding without embeddings.");
-        warnings.push("Failed to generate embeddings: " + embeddedChunksResult.message());
-        finalChunks = validatedChunks;
-    } else {
-        finalChunks = embeddedChunksResult;
-        log:printInfo("✅ Successfully generated embeddings for all chunks");
-    }
+    DocumentChunk[] finalChunks = check generateChunkEmbeddings(validatedChunks);
+    log:printInfo("✅ Successfully generated embeddings for all chunks");
 
     // Calculate statistics
     time:Utc endTime = time:utcNow();
-    ChunkingStats stats = calculateStats(finalChunks, startTime, endTime, documentText);
+    ChunkingStats stats = check calculateStats(finalChunks, startTime, endTime, documentText);
 
     log:printInfo("✅ Chunking completed successfully. Generated " + finalChunks.length().toString() + " chunks");
 
@@ -1679,7 +1679,7 @@ function processDocumentChunking(string documentText, string fileName, string do
     };
 }
 
-# Generate a unique document ID
+// Generate a unique document ID
 function generateDocumentId(string fileName) returns string {
     time:Utc currentTime = time:utcNow();
     // Use Unix timestamp instead of string representation to avoid special characters
@@ -1718,8 +1718,8 @@ function generateDocumentId(string fileName) returns string {
     return "doc_" + cleanFileName + "_" + timestamp.substring(0, 10);
 }
 
-# Create semantic chunks from document text
-function createSemanticChunks(string text, string documentId, ChunkConfig config) returns DocumentChunk[] {
+// Create semantic chunks from document text
+function createSemanticChunks(string text, string documentId, ChunkConfig config) returns DocumentChunk[]|error {
     DocumentChunk[] chunks = [];
 
     // Split text into paragraphs first
@@ -1731,12 +1731,11 @@ function createSemanticChunks(string text, string documentId, ChunkConfig config
     int currentPosition = 0;
 
     foreach string paragraph in paragraphs {
-        int|error tokenResult = getTokenCount(paragraph);
-        int paragraphTokens = tokenResult is int ? tokenResult : estimateTokensFallback(paragraph);
+        int paragraphTokens = check getTokenCount(paragraph);
 
         // If adding this paragraph would exceed the limit and we have content, finalize chunk
         if (currentTokens + paragraphTokens > config.maxTokens && currentChunk.length() > 0) {
-            DocumentChunk chunk = createDocumentChunk(
+            DocumentChunk chunk = check createDocumentChunk(
                     currentChunk.trim(),
                     currentPosition,
                     chunkSequence,
@@ -1762,7 +1761,7 @@ function createSemanticChunks(string text, string documentId, ChunkConfig config
 
     // Add final chunk if there's remaining content
     if (currentChunk.trim().length() > 0) {
-        DocumentChunk chunk = createDocumentChunk(
+        DocumentChunk chunk = check createDocumentChunk(
                 currentChunk.trim(),
                 currentPosition,
                 chunkSequence,
@@ -1774,13 +1773,12 @@ function createSemanticChunks(string text, string documentId, ChunkConfig config
     return chunks;
 }
 
-# Create a document chunk with metadata
+// Create a document chunk with metadata
 function createDocumentChunk(string text, int position, int sequence, string documentId)
-    returns DocumentChunk {
+    returns DocumentChunk|error {
 
     string chunkId = documentId + "_chunk_" + sequence.toString();
-    int|error tokenResult = getTokenCount(text);
-    int tokenCount = tokenResult is int ? tokenResult : estimateTokensFallback(text);
+    int tokenCount = check getTokenCount(text);
     string chunkType = determineChunkType(text);
 
     return {
@@ -1799,7 +1797,7 @@ function createDocumentChunk(string text, int position, int sequence, string doc
     };
 }
 
-# Add tax relevance scoring to chunks
+// Add tax relevance scoring to chunks
 function addTaxRelevanceScoring(DocumentChunk[] chunks, ChunkConfig config) returns DocumentChunk[] {
     DocumentChunk[] scoredChunks = [];
 
@@ -1820,7 +1818,7 @@ function addTaxRelevanceScoring(DocumentChunk[] chunks, ChunkConfig config) retu
     return scoredChunks;
 }
 
-# Extract tax-related keywords from text
+// Extract tax-related keywords from text
 function extractTaxKeywords(string text, string[] taxKeywords) returns string[] {
     string[] foundKeywords = [];
     string lowerText = text.toLowerAscii();
@@ -1834,7 +1832,7 @@ function extractTaxKeywords(string text, string[] taxKeywords) returns string[] 
     return foundKeywords;
 }
 
-# Calculate tax relevance score for a chunk
+// Calculate tax relevance score for a chunk
 function calculateRelevanceScore(string text, string[] keywords, string[] allKeywords) returns decimal {
     decimal score = 0.0d;
 
@@ -1861,7 +1859,7 @@ function calculateRelevanceScore(string text, string[] keywords, string[] allKey
     return score > 1.0d ? 1.0d : score;
 }
 
-# Validate and finalize chunks
+// Validate and finalize chunks
 function validateChunks(DocumentChunk[] chunks) returns DocumentChunk[] {
     DocumentChunk[] validChunks = [];
 
@@ -1878,9 +1876,9 @@ function validateChunks(DocumentChunk[] chunks) returns DocumentChunk[] {
     return validChunks;
 }
 
-# Calculate chunking statistics
+// Calculate chunking statistics
 function calculateStats(DocumentChunk[] chunks, time:Utc startTime, time:Utc endTime, string originalText)
-    returns ChunkingStats {
+    returns ChunkingStats|error {
 
     decimal processingTime = time:utcDiffSeconds(endTime, startTime);
     decimal totalTokens = 0.0;
@@ -1894,8 +1892,7 @@ function calculateStats(DocumentChunk[] chunks, time:Utc startTime, time:Utc end
     }
 
     decimal avgChunkSize = chunks.length() > 0 ? totalTokens / <decimal>chunks.length() : 0.0;
-    int|error originalTokenResult = getTokenCount(originalText);
-    int originalTokens = originalTokenResult is int ? originalTokenResult : estimateTokensFallback(originalText);
+    int originalTokens = check getTokenCount(originalText);
     decimal coverage = (totalTokens / <decimal>originalTokens) * 100.0;
 
     return {
@@ -1906,7 +1903,7 @@ function calculateStats(DocumentChunk[] chunks, time:Utc startTime, time:Utc end
     };
 }
 
-# Helper function to split text by paragraphs
+// Helper function to split text by paragraphs
 function splitTextByParagraphs(string text) returns string[] {
     string[] paragraphs = [];
     string currentParagraph = "";
@@ -1945,12 +1942,8 @@ function splitTextByParagraphs(string text) returns string[] {
 #
 # + text - The text to estimate tokens for
 # + return - Estimated token count
-function estimateTokens(string text) returns int {
-    log:printWarn("Using deprecated estimateTokens function. Consider using getTokenCount for accurate results.");
-    return estimateTokensFallback(text);
-}
-
-# Determine the type of chunk based on content
+// Strict mode: removed deprecated estimateTokens
+// Determine the type of chunk based on content
 function determineChunkType(string text) returns string {
     string upperText = text.toUpperAscii();
 
@@ -1965,7 +1958,7 @@ function determineChunkType(string text) returns string {
     }
 }
 
-# Check if text contains numeric content
+// Check if text contains numeric content
 function containsNumbers(string text) returns boolean {
     string[] digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
@@ -1977,7 +1970,7 @@ function containsNumbers(string text) returns boolean {
     return false;
 }
 
-# Simple string replacement function
+// Simple string replacement function
 function replaceStringSimple(string original, string searchFor, string replaceWith) returns string {
     string result = "";
     int searchLen = searchFor.length();
@@ -1997,11 +1990,15 @@ function replaceStringSimple(string original, string searchFor, string replaceWi
     return result;
 }
 
-# Chunking configuration
+// Chunking configuration
 type ChunkConfig record {
+    // maximum tokens per chunk
     int maxTokens;
+    // overlap tokens between chunks
     int overlapTokens;
+    // strategy name
     string strategy;
+    // keywords to detect tax relevance
     string[] taxKeywords;
 };
 
@@ -2422,26 +2419,26 @@ service /api/v1/documents on httpListener {
                 log:printInfo("✅ File uploaded to storage: " + actualStoragePath);
             }
 
-            // Store document metadata
-            error? metadataResult = storeDocumentMetadata(documentId, filename, actualStoragePath, chunkingResult);
-            if (metadataResult is error) {
-                log:printWarn("Failed to store document metadata: " + metadataResult.message());
-            }
+            // Store document metadata (strict)
+            check storeDocumentMetadata(documentId, filename, actualStoragePath, chunkingResult);
 
-            // Store chunks in database
-            error? chunksResult = storeChunksInDatabase(chunkingResult.chunks);
-            if (chunksResult is error) {
-                log:printWarn("Failed to store chunks: " + chunksResult.message());
-            }
+            // Store chunks in database (strict)
+            check storeChunksInDatabase(chunkingResult.chunks);
 
             // Step 5: Extract and persist tax rules from chunks
-            RuleExtractionResult|error ruleResult = extractTaxRulesForDocument(documentId, chunkingResult.chunks);
-            RuleExtractionResult ruleSummary;
-            if (ruleResult is error) {
-                log:printWarn("Rule extraction failed: " + ruleResult.message());
-                ruleSummary = {chunksProcessed: chunkingResult.totalChunks, candidateChunks: 0, rulesInserted: 0, bracketsInserted: 0, errors: 1};
-            } else {
-                ruleSummary = ruleResult;
+            RuleExtractionResult ruleSummary = check extractTaxRulesForDocument(documentId, chunkingResult.chunks);
+
+            // Auto-trigger: attempt decoupled form schema generation (non-blocking)
+            // We try income_tax for now; extend to other types as rule extraction broadens.
+            do {
+                json|error gen = generateAndActivateFormSchema("income_tax", ());
+                if (gen is error) {
+                    log:printWarn("Form schema generation skipped: " + gen.message());
+                } else {
+                    log:printInfo("Form schema generated/activated: " + gen.toString());
+                }
+            } on fail error ee {
+                log:printWarn("Form schema generation error: " + ee.message());
             }
 
             // Step 5: Prepare processing results with storage information
