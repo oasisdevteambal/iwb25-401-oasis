@@ -16,3 +16,9 @@ Overall, this design empowers administrators to maintain up‑to‑date tax regu
 1. What specific types of tax regulations in Sri Lanka (e.g., income tax, VAT, PAYE) should the system prioritize when extracting rules and generating dynamic forms? all of them
 2. How should the system handle versioning and updates of tax rules—should it maintain historical rule sets for past tax periods, or only reflect the most current regulations? mostly focus on the latest version. (if there is a method to understand how it was in past, and compare new tax and the past tax and method to compare the difference, it would be nice)
 3. Are there any existing Sri Lankan government tax forms or official document templates that should be used as reference for structuring the JSON Schemas and form layouts? actually i don't know about that. can you do the research on that aswell. 
+
+
+
+notes: 
+
+* since this is a critical application that relates to tax and regulations, the information should be precise. when extracting data from the documents and when they save in database, we need save actual and precise data in the database. we should not use fallback methods in the process of document extraction, if there are any errors occurs when extracting data and process them and do not save likely information (something like we do not really know. but we assume that is that. and save it. we must not do that. if we don't know. we don't know and tell the user about the problem.)
