@@ -299,28 +299,28 @@ The system utilizes Ballerina's Java interoperability features to integrate prof
 ┌─────────────────────────────────────────────────────────────────┐
 │                   Document Processing Layer                     │
 ├─────────────────────────────────────────────────────────────────┤
-│  Ballerina Services    │  Java Interop Layer │  External APIs  │
+│  Ballerina Services    │  Java Interop Layer │  External APIs   │
 │  - document_service    │  - PDFBox Integration│  - Fallback     │
-│  - pdf_parser         │  - Apache POI        │  - Gemini API   │
-│  - word_processor     │  - Text Extraction   │  - File Storage │
-│  - text_extractor     │  - Layout Parsing    │  - Supabase     │
+│  - pdf_parser         │  - Apache POI        │  - Gemini API    │
+│  - word_processor     │  - Text Extraction   │  - File Storage  │
+│  - text_extractor     │  - Layout Parsing    │  - Supabase      │
 └─────────────┬───────────────────────────────────────────────────┘
               │
 ┌─────────────▼───────────────────────────────────────────────────┐
 │                 Java Library Integration                        │
 ├─────────────────────────────────────────────────────────────────┤
-│  PDFBox (PDF Processing)     │  Apache POI (Office Docs)       │
-│  - Text extraction           │  - Word document processing     │
-│  - Layout preservation       │  - Excel spreadsheet parsing   │
-│  - Table detection          │  - PowerPoint extraction        │
-│  - Metadata extraction      │  - Format preservation          │
-│  - Embedded content         │  - Complex layouts              │
+│  PDFBox (PDF Processing)     │  Apache POI (Office Docs)        │
+│  - Text extraction           │  - Word document processing      │
+│  - Layout preservation       │  - Excel spreadsheet parsing     │
+│  - Table detection          │  - PowerPoint extraction          │
+│  - Metadata extraction      │  - Format preservation            │
+│  - Embedded content         │  - Complex layouts                │
 │                              │                                  │
-│  Benefits:                   │  Benefits:                      │
-│  - Professional PDF parsing │  - Complete Office support     │
-│  - Complex layout handling  │  - Native format understanding │
-│  - Compressed content       │  - Advanced text extraction    │
-│  - Scanned document OCR     │  - Metadata preservation       │
+│  Benefits:                   │  Benefits:                       │
+│  - Professional PDF parsing │  - Complete Office support        │
+│  - Complex layout handling  │  - Native format understanding    │
+│  - Compressed content       │  - Advanced text extraction       │
+│  - Scanned document OCR     │  - Metadata preservation          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -455,24 +455,24 @@ CREATE TABLE chunk_processing_stats (
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Storage Layer                              │
 ├─────────────────────────────────────────────────────────────────┤
-│  Structured Data    │  Chunk Data       │  Vector Data         │
-│  (Supabase)         │  (Supabase)       │  (pgvector extension)│
-│                     │                   │                      │
+│  Structured Data    │  Chunk Data       │  Vector Data          │
+│  (Supabase)         │  (Supabase)       │  (pgvector extension) │
+│                     │                   │                       │
 ├─────────────────────────────────────────────────────────────────┤
-│ • Tax Rules         │ • Document Chunks │ • Per-Chunk Embeds   │
-│ • Tax Brackets      │ • Chunk Metadata  │ • Semantic Vectors   │
-│ • User Data         │ • Processing Stats│ • Search Indices     │
-│ • Calculations      │ • Chunk Relations │ • Similarity Scores  │
-│ • Form Schemas      │ • Overlap Data    │ • Query Vectors      │
-│ • Audit Logs        │ • Error Tracking  │ • Context Embeddings │
+│ • Tax Rules         │ • Document Chunks │ • Per-Chunk Embeds    │
+│ • Tax Brackets      │ • Chunk Metadata  │ • Semantic Vectors    │
+│ • User Data         │ • Processing Stats│ • Search Indices      │
+│ • Calculations      │ • Chunk Relations │ • Similarity Scores   │
+│ • Form Schemas      │ • Overlap Data    │ • Query Vectors       │
+│ • Audit Logs        │ • Error Tracking  │ • Context Embeddings  │
 ├─────────────────────────────────────────────────────────────────┤
-│  Unstructured Data  │  Chunk Processing │  Performance Layer   │
-│  (Supabase Storage) │  Pipeline         │  (Redis Cache)       │
+│  Unstructured Data  │  Chunk Processing │  Performance Layer    │
+│  (Supabase Storage) │  Pipeline         │  (Redis Cache)        │
 ├─────────────────────────────────────────────────────────────────┤
-│ • Original PDFs     │ • Parallel Proc   │ • Chunk Cache        │
-│ • Word Documents    │ • Error Recovery  │ • Vector Cache       │
-│ • Images/Tables     │ • Progress Track  │ • Processing Queue   │
-│ • Backup Files      │ • Quality Control │ • Session Data       │
+│ • Original PDFs     │ • Parallel Proc   │ • Chunk Cache         │
+│ • Word Documents    │ • Error Recovery  │ • Vector Cache        │
+│ • Images/Tables     │ • Progress Track  │ • Processing Queue    │
+│ • Backup Files      │ • Quality Control │ • Session Data        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -505,10 +505,10 @@ CREATE TABLE chunk_processing_stats (
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Cache Layers                             │
 ├─────────────────────────────────────────────────────────────────┤
-│  Browser Cache     │  CDN Cache        │  Application Cache    │
-│  - Static Assets   │  - Images         │  - API Responses      │
-│  - Page Cache      │  - CSS/JS         │  - Query Results      │
-│  - Local Storage   │  - Documents      │  - Session Data       │
+│  Browser Cache     │  CDN Cache        │  Application Cache     │
+│  - Static Assets   │  - Images         │  - API Responses       │
+│  - Page Cache      │  - CSS/JS         │  - Query Results       │
+│  - Local Storage   │  - Documents      │  - Session Data        │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Redis Cache Layer                            │
 ├─────────────────────────────────────────────────────────────────┤
@@ -629,7 +629,7 @@ export async function POST(request: NextRequest) {
 │ • Encryption at Rest (AES-256)    • Encryption in Transit       │
 │ • Database Row-Level Security     • API Rate Limiting           │
 │ • Audit Logging                   • Sensitive Data Masking      │
-│ • Backup Encryption               • Key Management (Vault)       │
+│ • Backup Encryption               • Key Management (Vault)      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -654,7 +654,7 @@ export async function POST(request: NextRequest) {
 #### LLM Processing Pipeline with Intelligent Chunking
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Document Processing                           │
+│                    Document Processing                          │
 ├─────────────────────────────────────────────────────────────────┤
 │  Document Input  │  Text Extraction │  Intelligent Chunking     │
 │  - PDF Files     │  - OCR Processing│  - Semantic Segmentation  │
@@ -674,14 +674,14 @@ export async function POST(request: NextRequest) {
 ┌─────────────▼───────────────────────────────────────────────────┐
 │                    LLM Processing (Gemini Free)                 │
 ├─────────────────────────────────────────────────────────────────┤
-│  Per-Chunk Proc │  Structure       │  Validation & QA          │
+│  Per-Chunk Proc │  Structure       │  Validation & QA           │
 │  - Rule Extract  │  - JSON Schema   │  - Rule Consistency       │
 │  - Tax Brackets  │  - Field Types   │  - Data Validation        │
 │  - Deductions    │  - Relationships │  - Quality Scoring        │
 └─────────────┬───────────────────────────────────────────────────┘
               │
 ┌─────────────▼───────────────────────────────────────────────────┐
-│                    Data Storage (Supabase)                     │
+│                    Data Storage (Supabase)                      │
 ├─────────────────────────────────────────────────────────────────┤
 │  Structured Data │  Vector Storage  │  Chunk Management         │
 │  - Tax Rules DB  │  - pgvector      │  - Chunk Metadata         │
@@ -733,12 +733,12 @@ export async function POST(request: NextRequest) {
 │  - Embedding Gen  │  - K-NN Search   │  - Context Matching      │
 │  - Query Expand   │  - Filtering     │  - Result Fusion         │
 ├─────────────────────────────────────────────────────────────────┤
-│                    Vector Database (pgvector)                  │
+│                    Vector Database (pgvector)                   │
 ├─────────────────────────────────────────────────────────────────┤
 │ • Rule Embeddings (768D vectors)    • HNSW Index Structures     │
-│ • Document Sections               • Metadata Filtering         │
-│ • Query History                   • Performance Optimization   │
-│ • User Context                    • Supabase Integration       │
+│ • Document Sections               • Metadata Filtering          │
+│ • Query History                   • Performance Optimization    │
+│ • User Context                    • Supabase Integration        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -751,19 +751,19 @@ export async function POST(request: NextRequest) {
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Load Distribution                          │
 ├─────────────────────────────────────────────────────────────────┤
-│   Load Balancer   │   API Gateway    │   Service Mesh          │
-│   - Round Robin   │   - Rate Limiting│   - Circuit Breaker     │
-│   - Health Checks │   - Caching      │   - Retry Logic         │
-│   - SSL Term      │   - Auth Proxy   │   - Monitoring          │
+│   Load Balancer   │   API Gateway    │   Service Mesh           │
+│   - Round Robin   │   - Rate Limiting│   - Circuit Breaker      │
+│   - Health Checks │   - Caching      │   - Retry Logic          │
+│   - SSL Term      │   - Auth Proxy   │   - Monitoring           │
 └─────────────┬───────────────────────────────────────────────────┘
               │
 ┌─────────────▼───────────────────────────────────────────────────┐
 │                    Service Instances                            │
 ├─────────────────────────────────────────────────────────────────┤
-│  Frontend        │  Backend         │  Database               │
-│  - CDN Deploy    │  - Auto Scaling  │  - Read Replicas        │
-│  - Static Assets │  - Container Orch│  - Connection Pool      │
-│  - Edge Caching  │  - Health Monitor│  - Query Optimization   │
+│  Frontend        │  Backend         │  Database                 │
+│  - CDN Deploy    │  - Auto Scaling  │  - Read Replicas          │
+│  - Static Assets │  - Container Orch│  - Connection Pool        │
+│  - Edge Caching  │  - Health Monitor│  - Query Optimization     │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -774,18 +774,18 @@ export async function POST(request: NextRequest) {
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Monitoring Stack                            │
 ├─────────────────────────────────────────────────────────────────┤
-│  Application     │  Infrastructure  │  Business Metrics        │
-│  - Response Time │  - CPU/Memory    │  - Tax Calculations      │
-│  - Error Rates   │  - Disk I/O      │  - Document Processing   │
-│  - Throughput    │  - Network       │  - User Engagement       │
-│  - Custom Events │  - Database      │  - System Accuracy       │
+│  Application     │  Infrastructure  │  Business Metrics         │
+│  - Response Time │  - CPU/Memory    │  - Tax Calculations       │
+│  - Error Rates   │  - Disk I/O      │  - Document Processing    │
+│  - Throughput    │  - Network       │  - User Engagement        │
+│  - Custom Events │  - Database      │  - System Accuracy        │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Alerting & Analytics                         │
 ├─────────────────────────────────────────────────────────────────┤
-│ • Real-time Alerts           • Performance Dashboards          │
-│ • SLA Monitoring             • Capacity Planning               │
-│ • Anomaly Detection          • Cost Optimization               │
-│ • Root Cause Analysis        • Trend Analysis                  │
+│ • Real-time Alerts           • Performance Dashboards           │
+│ • SLA Monitoring             • Capacity Planning                │
+│ • Anomaly Detection          • Cost Optimization                │
+│ • Root Cause Analysis        • Trend Analysis                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -798,15 +798,15 @@ export async function POST(request: NextRequest) {
 ┌─────────────────────────────────────────────────────────────────┐
 │                   External Integrations                         │
 ├─────────────────────────────────────────────────────────────────┤
-│  AI/ML Services   │  Storage         │  Communication          │
-│  - Gemini API     │  - Supabase      │  - Email Service        │
-│  - Ollama Local   │  - Supabase      │  - SMS Gateway          │
-│  - Hugging Face   │  - Storage       │  - Push Notifications   │
+│  AI/ML Services   │  Storage         │  Communication           │
+│  - Gemini API     │  - Supabase      │  - Email Service         │
+│  - Ollama Local   │  - Supabase      │  - SMS Gateway           │
+│  - Hugging Face   │  - Storage       │  - Push Notifications    │
 ├─────────────────────────────────────────────────────────────────┤
-│  Government APIs  │  Payment         │  Analytics              │
-│  - Tax Authority  │  - Free Tiers    │  - Google Analytics     │
-│  - Document Verify│  - Stripe (dev)  │  - Plausible (free)     │
-│  - Compliance     │  - Local Banks   │  - Custom Events        │
+│  Government APIs  │  Payment         │  Analytics               │
+│  - Tax Authority  │  - Free Tiers    │  - Google Analytics      │
+│  - Document Verify│  - Stripe (dev)  │  - Plausible (free)      │
+│  - Compliance     │  - Local Banks   │  - Custom Events         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -834,19 +834,19 @@ export async function POST(request: NextRequest) {
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Development Lifecycle                        │
 ├─────────────────────────────────────────────────────────────────┤
-│  Local Dev       │  Version Control │  CI/CD Pipeline          │
-│  - Hot Reload    │  - Git Workflow  │  - Automated Tests       │
-│  - Dev Database  │  - Branch Policy │  - Code Quality          │
-│  - Mock Services │  - Code Review   │  - Security Scans        │
+│  Local Dev       │  Version Control │  CI/CD Pipeline           │
+│  - Hot Reload    │  - Git Workflow  │  - Automated Tests        │
+│  - Dev Database  │  - Branch Policy │  - Code Quality           │
+│  - Mock Services │  - Code Review   │  - Security Scans         │
 └─────────────┬───────────────────────────────────────────────────┘
               │
 ┌─────────────▼───────────────────────────────────────────────────┐
 │                    Quality Assurance                            │
 ├─────────────────────────────────────────────────────────────────┤
-│  Testing Strategy│  Code Quality    │  Documentation           │
-│  - Unit Tests    │  - Linting       │  - API Docs              │
-│  - Integration   │  - Type Checking │  - Architecture          │
-│  - E2E Tests     │  - Code Coverage │  - User Guides           │
+│  Testing Strategy│  Code Quality    │  Documentation            │
+│  - Unit Tests    │  - Linting       │  - API Docs               │
+│  - Integration   │  - Type Checking │  - Architecture           │
+│  - E2E Tests     │  - Code Coverage │  - User Guides            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -857,18 +857,18 @@ export async function POST(request: NextRequest) {
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Code Organization                           │
 ├─────────────────────────────────────────────────────────────────┤
-│  Domain Modules  │  Shared Libraries│  Configuration           │
-│  - Tax Engine    │  - Utils         │  - Environment           │
-│  - Document Proc │  - Validation    │  - Database              │
-│  - User Mgmt     │  - Logging       │  - API Settings          │
-│  - Form Builder  │  - Security      │  - Feature Flags         │
+│  Domain Modules  │  Shared Libraries│  Configuration            │
+│  - Tax Engine    │  - Utils         │  - Environment            │
+│  - Document Proc │  - Validation    │  - Database               │
+│  - User Mgmt     │  - Logging       │  - API Settings           │
+│  - Form Builder  │  - Security      │  - Feature Flags          │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Cross-Cutting Concerns                       │
 ├─────────────────────────────────────────────────────────────────┤
-│ • Logging & Monitoring      • Error Handling                   │
-│ • Security & Authentication • Caching Strategy                 │
-│ • Configuration Management  • Performance Optimization         │
-│ • Data Validation          • Internationalization             │
+│ • Logging & Monitoring      • Error Handling                    │
+│ • Security & Authentication • Caching Strategy                  │
+│ • Configuration Management  • Performance Optimization          │
+│ • Data Validation          • Internationalization               │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -881,18 +881,18 @@ export async function POST(request: NextRequest) {
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Container Layout                             │
 ├─────────────────────────────────────────────────────────────────┤
-│  Frontend        │  Backend         │  Database               │
-│  - Next.js App   │  - Ballerina     │  - Supabase (managed)   │
-│  - Static Assets │  - API Services  │  - Redis (free tier)    │
-│  - Nginx Proxy   │  - Background    │  - pgvector enabled     │
-│                  │    Workers       │  - Supabase Storage     │
+│  Frontend        │  Backend         │  Database                 │
+│  - Next.js App   │  - Ballerina     │  - Supabase (managed)     │
+│  - Static Assets │  - API Services  │  - Redis (free tier)      │
+│  - Nginx Proxy   │  - Background    │  - pgvector enabled       │
+│                  │    Workers       │  - Supabase Storage       │
 ├─────────────────────────────────────────────────────────────────┤
-│                    Orchestration                               │
+│                    Orchestration                                │
 ├─────────────────────────────────────────────────────────────────┤
-│ • Container Registry        • Health Checks                    │
-│ • Service Discovery         • Auto Scaling                     │
-│ • Load Balancing            • Rolling Updates                  │
-│ • Secret Management         • Backup & Recovery                │
+│ • Container Registry        • Health Checks                     │
+│ • Service Discovery         • Auto Scaling                      │
+│ • Load Balancing            • Rolling Updates                   │
+│ • Secret Management         • Backup & Recovery                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 

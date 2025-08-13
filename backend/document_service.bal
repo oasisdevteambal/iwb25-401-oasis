@@ -383,6 +383,329 @@ function storeChunksInDatabase(DocumentChunk[] chunks) returns error? {
 }
 
 // ============================================================================
+// Tax Rule Extraction (Phase 7)
+// ============================================================================
+
+// Result of extracting and persisting rules for a document
+type RuleExtractionResult record {
+    int chunksProcessed;
+    int candidateChunks;
+    int rulesInserted;
+    int bracketsInserted;
+    int errors;
+};
+
+// Minimal bracket model used during parsing
+type ParsedBracket record {
+    decimal? minIncome;
+    decimal? maxIncome;
+    decimal ratePercent; // e.g., 6 for 6%
+    decimal? fixedAmount;
+    int bracketOrder;
+    string sourceLine;
+};
+
+// Extract tax rules from provided chunks and persist into tax_rules and tax_brackets
+// documentId - The source document ID
+// chunks - Chunks belonging to the document
+// return - Aggregated persistence result or error
+function extractTaxRulesForDocument(string documentId, DocumentChunk[] chunks)
+        returns RuleExtractionResult|error {
+    log:printInfo("🧠 Extracting tax rules from chunks for document: " + documentId);
+
+    int chunksProcessed = 0;
+    int candidateChunks = 0;
+    int rulesInserted = 0;
+    int bracketsInserted = 0;
+    int errors = 0;
+
+    foreach DocumentChunk chunk in chunks {
+        chunksProcessed += 1;
+        // Heuristic: consider chunks that look like tables or contain percentage and money-like tokens
+        boolean likely = chunk.chunkType == "table" || (chunk.chunkText.includes("%") && (chunk.chunkText.toLowerAscii().includes("lkr") || chunk.chunkText.toLowerAscii().includes("rs") || containsNumbers(chunk.chunkText)));
+        if (!likely) {
+            continue;
+        }
+        candidateChunks += 1;
+
+        ParsedBracket[] parsed = parseBracketsFromChunk(chunk.chunkText);
+        if (parsed.length() == 0) {
+            continue;
+        }
+
+        // Build deterministic rule id per chunk
+        string ruleId = sanitizeId(documentId + "_brackets_" + chunk.sequence.toString());
+        string ruleType = "income_tax_brackets";
+        string ruleCategory = "income_tax";
+        string title = "Income Tax Brackets - Chunk " + chunk.sequence.toString();
+        string description = parsed.length().toString() + " bracket(s) extracted from chunk text";
+
+        // Build rule_data JSON
+        json[] bracketJsonArr = [];
+        foreach ParsedBracket b in parsed {
+            // Persist rate as fraction (0.06 for 6%) in DB; keep raw percent in rule_data
+            decimal rateFraction = b.ratePercent / 100.0d;
+            json jb = {
+                "min_income": b.minIncome is decimal ? b.minIncome : (),
+                "max_income": b.maxIncome is decimal ? b.maxIncome : (),
+                "rate_fraction": rateFraction,
+                "rate_percent": b.ratePercent,
+                "fixed_amount": b.fixedAmount is decimal ? b.fixedAmount : (),
+                "bracket_order": b.bracketOrder,
+                "source_line": b.sourceLine
+            };
+            bracketJsonArr.push(jb);
+        }
+
+        json ruleData = {
+            "schema": 1,
+            "type": ruleType,
+            "category": ruleCategory,
+            "source": {"document_id": documentId, "chunk_id": chunk.id, "sequence": chunk.sequence},
+            "parsing": {"method": "heuristic_v1", "lines_processed": countLines(chunk.chunkText)},
+            "brackets": bracketJsonArr
+        };
+
+        string ruleDataStr = ruleData.toString();
+
+        // Upsert rule
+        sql:ParameterizedQuery ruleUpsert = `
+            INSERT INTO tax_rules (
+                id, rule_type, rule_category, title, description, rule_data,
+                document_source_id, chunk_id, chunk_sequence, chunk_confidence,
+                extraction_context, cross_chunk_refs, created_at
+            ) VALUES (
+                ${ruleId}, ${ruleType}, ${ruleCategory}, ${title}, ${description}, ${ruleDataStr}::jsonb,
+                ${documentId}, ${chunk.id}, ${chunk.sequence}, ${chunk.relevanceScore},
+                ${"heuristic:table+line_parser"}, ${0}, NOW()
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                rule_data = ${ruleDataStr}::jsonb,
+                chunk_confidence = ${chunk.relevanceScore},
+                updated_at = NOW()
+        `;
+
+        sql:ExecutionResult|sql:Error ruleResult = dbClient->execute(ruleUpsert);
+        if (ruleResult is sql:Error) {
+            errors += 1;
+            log:printWarn("Failed to upsert tax_rules for chunk " + chunk.id + ": " + ruleResult.message());
+            continue;
+        }
+        rulesInserted += 1; // counts affected rules (upsert)
+
+        // Upsert brackets for this rule
+        int brOrder = 1;
+        foreach ParsedBracket b in parsed {
+            string bracketId = ruleId + "_b" + brOrder.toString();
+            decimal rateFraction = b.ratePercent / 100.0d;
+            decimal fixedAmt;
+            if (b.fixedAmount is decimal) {
+                fixedAmt = <decimal>b.fixedAmount;
+            } else {
+                fixedAmt = 0.0d;
+            }
+            sql:ParameterizedQuery bracketUpsert = `
+                INSERT INTO tax_brackets (
+                    id, rule_id, min_income, max_income, rate, fixed_amount, bracket_order
+                ) VALUES (
+            ${bracketId}, ${ruleId}, ${b.minIncome}, ${b.maxIncome}, ${rateFraction}, ${fixedAmt}, ${brOrder}
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                    min_income = ${b.minIncome},
+                    max_income = ${b.maxIncome},
+                    rate = ${rateFraction},
+            fixed_amount = ${fixedAmt}
+            `;
+            sql:ExecutionResult|sql:Error brResult = dbClient->execute(bracketUpsert);
+            if (brResult is sql:Error) {
+                errors += 1;
+                log:printWarn("Failed to upsert tax_brackets (" + bracketId + ") for rule " + ruleId + ": " + brResult.message());
+            } else {
+                bracketsInserted += 1;
+            }
+            brOrder += 1;
+        }
+    }
+
+    log:printInfo("🧠 Rule extraction completed: candidates=" + candidateChunks.toString() +
+            ", rules=" + rulesInserted.toString() + ", brackets=" + bracketsInserted.toString() + ", errors=" + errors.toString());
+
+    return {
+        chunksProcessed,
+        candidateChunks,
+        rulesInserted,
+        bracketsInserted,
+        errors
+    };
+}
+
+// Parse potential income tax brackets from a chunk text using simple heuristics
+function parseBracketsFromChunk(string text) returns ParsedBracket[] {
+    ParsedBracket[] brackets = [];
+    int brOrder = 1;
+
+    // Iterate line by line (limit to avoid runaway)
+    int processed = 0;
+    int cursor = 0;
+    while (cursor < text.length() && processed < 500) {
+        int nextBreak = text.indexOf("\n", cursor) ?: text.length();
+        string line = text.substring(cursor, nextBreak).trim();
+        cursor = nextBreak + 1;
+        processed += 1;
+
+        if (line.length() == 0) {
+            continue;
+        }
+
+        decimal? percent = extractPercent(line);
+        if (percent is ()) {
+            continue;
+        }
+
+        // Find monetary amounts in the line
+        decimal[] amounts = extractNumbers(line);
+
+        decimal? minIncome = ();
+        decimal? maxIncome = ();
+        string lower = line.toLowerAscii();
+
+        if (lower.includes("-") && amounts.length() >= 2) {
+            // Range pattern: X - Y
+            minIncome = amounts[0];
+            maxIncome = amounts[1];
+        } else if ((lower.includes("up to") || lower.includes("not exceeding") || lower.includes("<=") || lower.includes("≤")) && amounts.length() >= 1) {
+            minIncome = 0.0d;
+            maxIncome = amounts[0];
+        } else if ((lower.includes("over") || lower.includes("above") || lower.includes("exceeding") || lower.includes(">")) && amounts.length() >= 1) {
+            minIncome = amounts[0];
+            maxIncome = ();
+        } else if (amounts.length() >= 2) {
+            // Fallback: treat first two numbers as range
+            minIncome = amounts[0];
+            maxIncome = amounts[1];
+        } else if (amounts.length() == 1) {
+            // Indeterminate min: keep only max
+            maxIncome = amounts[0];
+        }
+
+        decimal rateP = percent is decimal ? percent : 0.0d;
+        ParsedBracket b = {
+            minIncome: minIncome,
+            maxIncome: maxIncome,
+            ratePercent: rateP,
+            fixedAmount: (),
+            bracketOrder: brOrder,
+            sourceLine: line
+        };
+        brackets.push(b);
+        brOrder += 1;
+    }
+
+    return brackets;
+}
+
+// Extract all decimal numbers found in a line (supports thousand separators and decimals)
+function extractNumbers(string s) returns decimal[] {
+    decimal[] out = [];
+    string buf = "";
+    int i = 0;
+    while (i < s.length()) {
+        string ch = s.substring(i, i + 1);
+        boolean isNum = (ch >= "0" && ch <= "9") || ch == "," || ch == ".";
+        if (isNum) {
+            buf += ch;
+        } else {
+            if (buf.length() > 0) {
+                string cleaned = removeCommas(buf);
+                decimal|error n = decimal:fromString(cleaned);
+                if (n is decimal) {
+                    out.push(n);
+                }
+                buf = "";
+            }
+        }
+        i += 1;
+    }
+    if (buf.length() > 0) {
+        string cleaned = removeCommas(buf);
+        decimal|error n = decimal:fromString(cleaned);
+        if (n is decimal) {
+            out.push(n);
+        }
+    }
+    return out;
+}
+
+// Extract a percentage value near a % sign in the line
+function extractPercent(string s) returns decimal? {
+    int pos = s.indexOf("%") ?: -1;
+    if (pos == -1) {
+        return ();
+    }
+    // scan left for number
+    int iStart = pos - 1;
+    while (iStart >= 0) {
+        string ch = s.substring(iStart, iStart + 1);
+        boolean ok = (ch >= "0" && ch <= "9") || ch == "." || ch == "," || ch == " ";
+        if (!ok) {
+            iStart += 1; // move to first numeric char
+            break;
+        }
+        iStart -= 1;
+    }
+    if (iStart < 0) {
+        iStart = 0;
+    }
+    string numStr = s.substring(iStart, pos).trim();
+    numStr = removeCommas(numStr);
+    decimal|error d = decimal:fromString(numStr);
+    if (d is decimal) {
+        return d;
+    }
+    return ();
+}
+
+// Count lines in a text quickly
+function countLines(string s) returns int {
+    int count = 1;
+    int i = 0;
+    while (i < s.length()) {
+        if (s.substring(i, i + 1) == "\n") {
+            count += 1;
+        }
+        i += 1;
+    }
+    return count;
+}
+
+// Remove commas from a string
+function removeCommas(string s) returns string {
+    string out = "";
+    int i = 0;
+    while (i < s.length()) {
+        string ch = s.substring(i, i + 1);
+        if (ch != ",") {
+            out += ch;
+        }
+        i += 1;
+    }
+    return out;
+}
+
+// Sanitize ID to avoid special characters
+function sanitizeId(string s) returns string {
+    string out = "";
+    int i = 0;
+    while (i < s.length()) {
+        string ch = s.substring(i, i + 1);
+        boolean ok = (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || (ch >= "0" && ch <= "9") || ch == "_" || ch == "-";
+        out += ok ? ch : "_";
+        i += 1;
+    }
+    return out;
+}
+
+// ============================================================================
 // Semantic Search Functions (Phase 6) - Placeholder
 // ============================================================================
 
@@ -645,7 +968,7 @@ function searchSimilarChunks(string query, int 'limit = 10) returns ChunkSearchR
 
 }
 
-# Chunk search result type
+// Chunk search result type
 type ChunkSearchResult record {
     string id;
     string document_id;
@@ -2111,6 +2434,16 @@ service /api/v1/documents on httpListener {
                 log:printWarn("Failed to store chunks: " + chunksResult.message());
             }
 
+            // Step 5: Extract and persist tax rules from chunks
+            RuleExtractionResult|error ruleResult = extractTaxRulesForDocument(documentId, chunkingResult.chunks);
+            RuleExtractionResult ruleSummary;
+            if (ruleResult is error) {
+                log:printWarn("Rule extraction failed: " + ruleResult.message());
+                ruleSummary = {chunksProcessed: chunkingResult.totalChunks, candidateChunks: 0, rulesInserted: 0, bracketsInserted: 0, errors: 1};
+            } else {
+                ruleSummary = ruleResult;
+            }
+
             // Step 5: Prepare processing results with storage information
             log:printInfo("Document processing and storage completed successfully");
             json result = {
@@ -2139,6 +2472,13 @@ service /api/v1/documents on httpListener {
                     "extractedTextPreview": extractionResult.extractedText.length() > 200 ?
                         extractionResult.extractedText.substring(0, 200) + "..." :
                         extractionResult.extractedText
+                },
+                "ruleExtraction": {
+                    "chunksProcessed": ruleSummary.chunksProcessed,
+                    "candidateChunks": ruleSummary.candidateChunks,
+                    "rulesInserted": ruleSummary.rulesInserted,
+                    "bracketsInserted": ruleSummary.bracketsInserted,
+                    "errors": ruleSummary.errors
                 },
                 "analysis": {
                     "documentType": structure.documentType,

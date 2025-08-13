@@ -3,127 +3,56 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
          http://maven.apache.org/xsd/maven-4.0.0.xsd">
-    
     <modelVersion>4.0.0</modelVersion>
-    
+
     <groupId>com.oasis</groupId>
     <artifactId>document-extractor</artifactId>
     <version>1.0.0</version>
     <packaging>jar</packaging>
-    
-    <name>Document Extractor</name>
-    <description>A Java library for extracting text and metadata from PDF and Word documents</description>
-    
+
+    <name>Document Extractor Library</name>
+    <description>Custom Java library for document text extraction optimized for Ballerina</description>
+
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <tika.version>2.9.1</tika.version>
     </properties>
-    
+
     <dependencies>
-        <!-- Apache Tika Core - for document parsing -->
+        <!-- Apache Tika for unified document processing -->
         <dependency>
             <groupId>org.apache.tika</groupId>
             <artifactId>tika-core</artifactId>
             <version>${tika.version}</version>
-            <exclusions>
-                <!-- Exclude BouncyCastle from Tika to avoid conflicts -->
-                <exclusion>
-                    <groupId>org.bouncycastle</groupId>
-                    <artifactId>bcprov-jdk18on</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>org.bouncycastle</groupId>
-                    <artifactId>bcpkix-jdk18on</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>org.bouncycastle</groupId>
-                    <artifactId>bcutil-jdk18on</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
-
-        <!-- Apache Tika Parsers - for specific document formats -->
+        
         <dependency>
             <groupId>org.apache.tika</groupId>
             <artifactId>tika-parsers-standard-package</artifactId>
             <version>${tika.version}</version>
-            <exclusions>
-                <!-- Exclude BouncyCastle from Tika parsers -->
-                <exclusion>
-                    <groupId>org.bouncycastle</groupId>
-                    <artifactId>bcprov-jdk18on</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>org.bouncycastle</groupId>
-                    <artifactId>bcpkix-jdk18on</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>org.bouncycastle</groupId>
-                    <artifactId>bcutil-jdk18on</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
 
-        <!-- Apache POI for enhanced Office document support -->
-        <dependency>
-            <groupId>org.apache.poi</groupId>
-            <artifactId>poi</artifactId>
-            <version>5.2.4</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.poi</groupId>
-            <artifactId>poi-ooxml</artifactId>
-            <version>5.2.4</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.poi</groupId>
-            <artifactId>poi-scratchpad</artifactId>
-            <version>5.2.4</version>
-        </dependency>
-
-        <!-- Language detection -->
+        <!-- Tika language detection -->
         <dependency>
             <groupId>org.apache.tika</groupId>
             <artifactId>tika-langdetect-optimaize</artifactId>
             <version>${tika.version}</version>
         </dependency>
 
-        <!-- BouncyCastle dependencies - mark as provided so Ballerina runtime provides them -->
-        <dependency>
-            <groupId>org.bouncycastle</groupId>
-            <artifactId>bcprov-jdk18on</artifactId>
-            <version>1.78.1</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.bouncycastle</groupId>
-            <artifactId>bcpkix-jdk18on</artifactId>
-            <version>1.78.1</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.bouncycastle</groupId>
-            <artifactId>bcutil-jdk18on</artifactId>
-            <version>1.78.1</version>
-            <scope>provided</scope>
-        </dependency>
-
-        <!-- SLF4J API - provided by Ballerina runtime -->
+        <!-- SLF4J API for logging -->
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
             <version>1.7.36</version>
-            <scope>provided</scope>
         </dependency>
 
-        <!-- SLF4J Simple implementation - provided by Ballerina runtime -->
+        <!-- SLF4J Simple implementation -->
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-simple</artifactId>
             <version>1.7.36</version>
-            <scope>provided</scope>
         </dependency>
 
         <!-- Commons Compress for archive handling -->
@@ -170,37 +99,15 @@
                         <configuration>
                             <finalName>document-extractor-optimized</finalName>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
-                            <minimizeJar>true</minimizeJar>
-                            
-                            <!-- Exclude conflicting artifacts from the shaded JAR -->
-                            <artifactSet>
-                                <excludes>
-                                    <!-- Exclude BouncyCastle - let Ballerina runtime provide these -->
-                                    <exclude>org.bouncycastle:bcprov-jdk18on</exclude>
-                                    <exclude>org.bouncycastle:bcpkix-jdk18on</exclude>
-                                    <exclude>org.bouncycastle:bcutil-jdk18on</exclude>
-                                    <!-- Exclude SLF4J - let Ballerina runtime provide these -->
-                                    <exclude>org.slf4j:slf4j-api</exclude>
-                                    <exclude>org.slf4j:slf4j-simple</exclude>
-                                </excludes>
-                            </artifactSet>
-                            
                             <filters>
+                                <!-- Simple filtering - only exclude signature files -->
                                 <filter>
                                     <artifact>*:*</artifact>
                                     <excludes>
-                                        <!-- Exclude Ballerina runtime classes that conflict -->
-                                        <exclude>org/ballerinalang/**</exclude>
-                                        <exclude>org/ballerina/**</exclude>
-                                        <exclude>io/ballerina/**</exclude>
-                                        <!-- Exclude signature files -->
                                         <exclude>META-INF/*.SF</exclude>
                                         <exclude>META-INF/*.DSA</exclude>
                                         <exclude>META-INF/*.RSA</exclude>
-                                        <!-- Exclude duplicate license files -->
-                                        <exclude>META-INF/LICENSE*</exclude>
-                                        <exclude>META-INF/NOTICE*</exclude>
-                                        <exclude>META-INF/DEPENDENCIES*</exclude>
+                                        <!-- Keep everything else including commons-logging -->
                                     </excludes>
                                 </filter>
                             </filters>
