@@ -22,7 +22,92 @@ export default function RootLayout({ children }) {
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {children}
+        <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
+          <div className="mx-auto max-w-6xl px-6">
+            <div className="flex items-center justify-between h-16">
+              {/* Left Side - Logo/Brand */}
+              <div className="flex items-center">
+                <a href="/" className="text-lg font-bold text-gray-900 hover:text-blue-600 transition-colors">
+                  Tax Forms
+                </a>
+              </div>
+              
+              {/* Center - Main Navigation */}
+              <nav className="hidden md:flex items-center space-x-8">
+                <a href="/forms" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
+                  Forms
+                </a>
+                <a href="/upload" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
+                  Upload
+                </a>
+                <a href="/history" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
+                  History
+                </a>
+                <a href="/admin" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
+                  Admin
+                </a>
+              </nav>
+              
+              {/* Right Side - Auth */}
+              <div className="flex items-center space-x-4">
+                <a href="/login" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
+                  Sign In
+                </a>
+                <a href="/signup" className="btn btn-primary text-sm">
+                  Sign Up
+                </a>
+              </div>
+              
+              {/* Mobile menu button */}
+              <div className="md:hidden">
+                <button type="button" className="text-gray-700 hover:text-blue-600">
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
+        
+        <main className="min-h-[calc(100vh-64px)]">{children}</main>
+        
+        <footer className="bg-gray-50 border-t border-gray-200">
+          <div className="mx-auto max-w-6xl px-6 py-8">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+              <div>
+                <h3 className="font-bold text-gray-900 mb-3">Tax Forms</h3>
+                <p className="text-sm text-gray-600">
+                  Dynamic tax form generation system powered by intelligent document processing.
+                </p>
+              </div>
+              <div>
+                <h4 className="font-medium text-gray-900 mb-3">Forms</h4>
+                <ul className="space-y-2 text-sm text-gray-600">
+                  <li><a href="/forms/income_tax" className="hover:text-blue-600">Income Tax</a></li>
+                  <li><a href="/forms" className="hover:text-blue-600">All Forms</a></li>
+                </ul>
+              </div>
+              <div>
+                <h4 className="font-medium text-gray-900 mb-3">Tools</h4>
+                <ul className="space-y-2 text-sm text-gray-600">
+                  <li><a href="/upload" className="hover:text-blue-600">Document Upload</a></li>
+                  <li><a href="/history" className="hover:text-blue-600">Submission History</a></li>
+                </ul>
+              </div>
+              <div>
+                <h4 className="font-medium text-gray-900 mb-3">Support</h4>
+                <ul className="space-y-2 text-sm text-gray-600">
+                  <li><a href="#" className="hover:text-blue-600">Help Center</a></li>
+                  <li><a href="#" className="hover:text-blue-600">Contact Us</a></li>
+                </ul>
+              </div>
+            </div>
+            <div className="border-t border-gray-200 mt-8 pt-6 text-sm text-gray-500">
+              © {new Date().getFullYear()} Tax Forms. All rights reserved.
+            </div>
+          </div>
+        </footer>
       </body>
     </html>
   );

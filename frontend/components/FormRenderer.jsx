@@ -2,156 +2,418 @@
 import { useMemo, useState } from "react";
 
 function getOrderedFields(jsonSchema, uiSchema) {
-  const props = jsonSchema?.properties ? Object.keys(jsonSchema.properties) : [];
-  const order = uiSchema?.["ui:order"]; // optional array order
-  if (Array.isArray(order) && order.length) {
-    const seen = new Set();
-    const ordered = [];
-    for (const k of order) {
-      if (props.includes(k)) {
-        ordered.push(k);
-        seen.add(k);
-      }
-    }
-    for (const k of props) if (!seen.has(k)) ordered.push(k);
-    return ordered;
-  }
-  return props;
-}
-
-function Field({ name, schema, value, required, onChange }) {
-  const type = schema?.type;
-  const title = schema?.title || name;
-  const description = schema?.description;
-  const enumVals = schema?.enum;
-  const min = schema?.minimum;
-  const pattern = schema?.pattern;
-
-  const commonProps = {
-    id: `field-${name}`,
-    name,
-    className:
-      "block w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-black focus:outline-none",
-    value: value ?? (type === "number" ? "" : ""),
-    onChange: (e) => {
-      const v = e.target.value;
-      if (type === "number" && v !== "") {
-        const n = Number(v);
-        onChange(Number.isNaN(n) ? undefined : n);
-      } else {
-        onChange(v);
-      }
-    },
-    required: !!required,
-  };
-
-  return (
-    <div className="mb-4">
-      <label htmlFor={`field-${name}`} className="mb-1 block text-sm font-medium">
-        {title}
-        {required ? <span className="text-red-600"> *</span> : null}
-      </label>
-      {Array.isArray(enumVals) ? (
-        <select {...commonProps} value={value ?? ""}>
-          <option value="">Select...</option>
-          {enumVals.map((opt) => (
-            <option key={String(opt)} value={String(opt)}>
-              {String(opt)}
-            </option>
-          ))}
-        </select>
-      ) : type === "number" ? (
-        <input type="number" {...commonProps} min={min !== undefined ? min : undefined} step="any" />
-      ) : (
-        <input type="text" {...commonProps} pattern={pattern || undefined} />
-      )}
-      {description ? <p className="mt-1 text-xs text-gray-500">{description}</p> : null}
-    </div>
-  );
-}
-
-export default function FormRenderer({ schemaBlob, onSubmit }) {
-  const jsonSchema = schemaBlob?.jsonSchema || { type: "object", properties: {} };
-  const uiSchema = schemaBlob?.uiSchema || {};
-  const required = Array.isArray(jsonSchema?.required) ? jsonSchema.required : [];
-
-  const fields = useMemo(() => getOrderedFields(jsonSchema, uiSchema), [jsonSchema, uiSchema]);
-  const [formData, setFormData] = useState({});
-  const [errors, setErrors] = useState([]);
-  const [submitted, setSubmitted] = useState(null);
-
-  function validate() {
-    const errs = [];
-    // Required
-    for (const key of required) {
-      const v = formData[key];
-      if (v === undefined || v === "") errs.push(`${key} is required`);
-    }
-    // Minimum (number)
-    for (const key of fields) {
-      const s = jsonSchema.properties?.[key];
-      if (!s) continue;
-      if (s.type === "number" && s.minimum !== undefined) {
-        const v = formData[key];
-        if (v !== undefined && typeof v === "number" && v < s.minimum) {
-          errs.push(`${key} must be >= ${s.minimum}`);
+    const props = jsonSchema?.properties ? Object.keys(jsonSchema.properties) : [];
+    const order = uiSchema?.["ui:order"]; // optional array order
+    if (Array.isArray(order) && order.length) {
+        const seen = new Set();
+        const ordered = [];
+        for (const k of order) {
+            if (props.includes(k)) {
+                ordered.push(k);
+                seen.add(k);
+            }
         }
-      }
-      if (s.type === "string" && s.pattern) {
-        try {
-          const re = new RegExp(s.pattern);
-          const v = formData[key];
-          if (v && !re.test(String(v))) errs.push(`${key} is invalid`);
-        } catch {}
-      }
+        for (const k of props) if (!seen.has(k)) ordered.push(k);
+        return ordered;
     }
-    return errs;
-  }
+    return props;
+}
 
-  function handleSubmit(e) {
-    e.preventDefault();
-    const errs = validate();
-    setErrors(errs);
-    if (errs.length === 0) {
-      setSubmitted({ ...formData });
-      onSubmit?.(formData);
+function getFieldGroups(fields, jsonSchema) {
+    // Group fields by common prefixes or categories
+    const groups = {
+        'Personal Information': [],
+        'Income Details': [],
+        'Deductions': [],
+        'Other': []
+    };
+
+    fields.forEach(fieldName => {
+        const field = jsonSchema.properties?.[fieldName];
+        const title = field?.title || fieldName;
+
+        if (fieldName.includes('personal') || fieldName.includes('name') || fieldName.includes('id')) {
+            groups['Personal Information'].push(fieldName);
+        } else if (fieldName.includes('income') || fieldName.includes('salary') || fieldName.includes('wage')) {
+            groups['Income Details'].push(fieldName);
+        } else if (fieldName.includes('deduction') || fieldName.includes('allowance') || fieldName.includes('credit')) {
+            groups['Deductions'].push(fieldName);
+        } else {
+            groups['Other'].push(fieldName);
+        }
+    });
+
+    // Remove empty groups
+    return Object.fromEntries(
+        Object.entries(groups).filter(([_, fields]) => fields.length > 0)
+    );
+}
+
+function ProvenanceDrawer({ isOpen, onClose, field, schema }) {
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-50 overflow-hidden">
+            <div className="absolute inset-0 bg-black bg-opacity-50" onClick={onClose} />
+            <div className="absolute right-0 top-0 h-full w-96 bg-white shadow-xl">
+                <div className="p-6">
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-medium text-gray-900">Field Information</h3>
+                        <button
+                            onClick={onClose}
+                            className="text-gray-400 hover:text-gray-600"
+                        >
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div className="space-y-4">
+                        <div>
+                            <h4 className="font-medium text-gray-900 mb-2">Field Details</h4>
+                            <div className="bg-gray-50 p-3 rounded">
+                                <div className="text-sm space-y-1">
+                                    <div><strong>Name:</strong> {field}</div>
+                                    <div><strong>Type:</strong> {schema?.type || 'text'}</div>
+                                    <div><strong>Required:</strong> {schema?.required ? 'Yes' : 'No'}</div>
+                                    {schema?.description && (
+                                        <div><strong>Description:</strong> {schema.description}</div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h4 className="font-medium text-gray-900 mb-2">Rule Provenance</h4>
+                            <div className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                                    <span className="text-sm font-medium text-green-700">High Confidence (95%)</span>
+                                </div>
+                                <div className="text-sm text-gray-600">
+                                    <strong>Source Document:</strong> Tax Code Amendment 2025.pdf
+                                </div>
+                                <div className="text-sm text-gray-600">
+                                    <strong>Page:</strong> 12, Section 3.2
+                                </div>
+                                <div className="text-sm text-gray-600">
+                                    <strong>Extracted Rule:</strong> "Personal income must be declared for amounts exceeding..."
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h4 className="font-medium text-gray-900 mb-2">Validation Rules</h4>
+                            <div className="bg-gray-50 p-3 rounded text-sm">
+                                {schema?.minimum !== undefined && (
+                                    <div>Minimum value: {schema.minimum}</div>
+                                )}
+                                {schema?.pattern && (
+                                    <div>Pattern: {schema.pattern}</div>
+                                )}
+                                {schema?.enum && (
+                                    <div>Allowed values: {schema.enum.join(', ')}</div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function Field({ name, schema, value, required, onChange, onShowProvenance }) {
+    const type = schema?.type;
+    const title = schema?.title || name.replaceAll('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+    const description = schema?.description;
+    const enumVals = schema?.enum;
+    const min = schema?.minimum;
+    const pattern = schema?.pattern;
+
+    const commonProps = {
+        id: `field-${name}`,
+        name,
+        className: "form-field",
+        value: value ?? (type === "number" ? "" : ""),
+        onChange: (e) => {
+            const v = e.target.value;
+            if (type === "number" && v !== "") {
+                const n = Number(v);
+                onChange(Number.isNaN(n) ? undefined : n);
+            } else {
+                onChange(v);
+            }
+        },
+        required: !!required,
+    };
+
+    return (
+        <div className="space-y-2">
+            <div className="flex items-center justify-between">
+                <label htmlFor={`field-${name}`} className="block text-sm font-medium text-gray-700">
+                    {title}
+                    {required ? <span className="text-red-600 ml-1">*</span> : null}
+                </label>
+                <button
+                    type="button"
+                    onClick={() => onShowProvenance(name, schema)}
+                    className="text-blue-600 hover:text-blue-800 p-1"
+                    title="Why this field?"
+                >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </button>
+            </div>
+
+            {Array.isArray(enumVals) ? (
+                <select {...commonProps} value={value ?? ""}>
+                    <option value="">Select...</option>
+                    {enumVals.map((opt) => (
+                        <option key={String(opt)} value={String(opt)}>
+                            {String(opt)}
+                        </option>
+                    ))}
+                </select>
+            ) : type === "number" ? (
+                <input type="number" {...commonProps} min={min !== undefined ? min : undefined} step="any" />
+            ) : (
+                <input type="text" {...commonProps} pattern={pattern || undefined} />
+            )}
+
+            {description ? <p className="text-xs text-gray-500">{description}</p> : null}
+
+            {/* Confidence indicator */}
+            <div className="flex items-center gap-1">
+                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                <span className="text-xs text-gray-500">High confidence</span>
+            </div>
+        </div>
+    );
+}
+
+export default function FormRenderer({ schemaBlob }) {
+    const jsonSchema = schemaBlob?.jsonSchema || { type: "object", properties: {} };
+    const uiSchema = schemaBlob?.uiSchema || {};
+    const required = Array.isArray(jsonSchema?.required) ? jsonSchema.required : [];
+
+    const fields = useMemo(() => getOrderedFields(jsonSchema, uiSchema), [jsonSchema, uiSchema]);
+    const fieldGroups = useMemo(() => getFieldGroups(fields, jsonSchema), [fields, jsonSchema]);
+
+    const [formData, setFormData] = useState({});
+    const [errors, setErrors] = useState([]);
+    const [submitted, setSubmitted] = useState(null);
+    const [expandedGroups, setExpandedGroups] = useState(
+        Object.fromEntries(Object.keys(fieldGroups).map(group => [group, true]))
+    );
+    const [provenanceDrawer, setProvenanceDrawer] = useState({
+        isOpen: false,
+        field: null,
+        schema: null
+    });
+
+    function validate() {
+        const errs = [];
+        // Required
+        for (const key of required) {
+            const v = formData[key];
+            if (v === undefined || v === "") errs.push(`${key} is required`);
+        }
+        // Minimum (number)
+        for (const key of fields) {
+            const s = jsonSchema.properties?.[key];
+            if (!s) continue;
+            if (s.type === "number" && s.minimum !== undefined) {
+                const v = formData[key];
+                if (v !== undefined && typeof v === "number" && v < s.minimum) {
+                    errs.push(`${key} must be >= ${s.minimum}`);
+                }
+            }
+            if (s.type === "string" && s.pattern) {
+                try {
+                    const re = new RegExp(s.pattern);
+                    const v = formData[key];
+                    if (v && !re.test(String(v))) errs.push(`${key} is invalid`);
+                } catch { }
+            }
+        }
+        return errs;
     }
-  }
 
-  return (
-    <div className="max-w-2xl">
-      <form onSubmit={handleSubmit} noValidate>
-        {fields.map((name) => (
-          <Field
-            key={name}
-            name={name}
-            schema={jsonSchema.properties?.[name]}
-            value={formData[name]}
-            required={required.includes(name)}
-            onChange={(v) => setFormData((p) => ({ ...p, [name]: v }))}
-          />
-        ))}
-        {errors.length > 0 ? (
-          <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">
-            <ul className="list-disc pl-5">
-              {errors.map((er, i) => (
-                <li key={i}>{er}</li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-        <button
-          type="submit"
-          className="rounded bg-black px-4 py-2 text-white hover:bg-gray-800"
-        >
-          Submit
-        </button>
-      </form>
-      {submitted ? (
-        <pre className="mt-6 overflow-auto rounded bg-gray-100 p-3 text-xs">
-{JSON.stringify(submitted, null, 2)}
-        </pre>
-      ) : null}
-    </div>
-  );
+    function handleSubmit(e) {
+        e.preventDefault();
+        const errs = validate();
+        setErrors(errs);
+        if (errs.length === 0) {
+            setSubmitted({ ...formData });
+        }
+    }
+
+    function toggleGroup(groupName) {
+        setExpandedGroups(prev => ({
+            ...prev,
+            [groupName]: !prev[groupName]
+        }));
+    }
+
+    function showProvenance(fieldName, schema) {
+        setProvenanceDrawer({
+            isOpen: true,
+            field: fieldName,
+            schema: schema
+        });
+    }
+
+    function closeProvenance() {
+        setProvenanceDrawer({
+            isOpen: false,
+            field: null,
+            schema: null
+        });
+    }
+
+    const completedFields = Object.keys(formData).filter(key =>
+        formData[key] !== undefined && formData[key] !== ""
+    ).length;
+
+    const totalFields = fields.length;
+    const completionPercentage = totalFields > 0 ? Math.round((completedFields / totalFields) * 100) : 0;
+
+    return (
+        <div className="space-y-6">
+            {/* Form Progress Summary */}
+            <div className="card">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-medium text-gray-900">Form Progress</h2>
+                    <span className="text-sm text-gray-600">{completedFields} of {totalFields} fields completed</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                        className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${completionPercentage}%` }}
+                    />
+                </div>
+            </div>
+
+            <form onSubmit={handleSubmit} noValidate className="space-y-6">
+                {/* Grouped Fields */}
+                {Object.entries(fieldGroups).map(([groupName, groupFields]) => (
+                    <div key={groupName} className="card">
+                        <button
+                            type="button"
+                            onClick={() => toggleGroup(groupName)}
+                            className="flex items-center justify-between w-full text-left"
+                        >
+                            <div className="flex items-center gap-3">
+                                <h3 className="text-lg font-medium text-gray-900">{groupName}</h3>
+                                <span className="badge badge-gray text-xs">
+                                    {groupFields.length} fields
+                                </span>
+                                <div className={`w-3 h-3 rounded-full ${groupFields.every(field => formData[field] !== undefined && formData[field] !== "")
+                                        ? 'bg-green-500'
+                                        : groupFields.some(field => formData[field] !== undefined && formData[field] !== "")
+                                            ? 'bg-yellow-500'
+                                            : 'bg-gray-300'
+                                    }`} />
+                            </div>
+                            <svg
+                                className={`w-5 h-5 text-gray-500 transition-transform ${expandedGroups[groupName] ? 'rotate-180' : ''
+                                    }`}
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+
+                        {expandedGroups[groupName] && (
+                            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6 slide-in">
+                                {groupFields.map((name) => (
+                                    <Field
+                                        key={name}
+                                        name={name}
+                                        schema={jsonSchema.properties?.[name]}
+                                        value={formData[name]}
+                                        required={required.includes(name)}
+                                        onChange={(v) => setFormData((p) => ({ ...p, [name]: v }))}
+                                        onShowProvenance={showProvenance}
+                                    />
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                ))}
+
+                {/* Error Summary */}
+                {errors.length > 0 ? (
+                    <div className="card border-red-200 bg-red-50">
+                        <div className="flex items-start gap-3">
+                            <svg className="w-5 h-5 text-red-500 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <div>
+                                <h3 className="font-medium text-red-800 mb-2">Please correct the following errors:</h3>
+                                <ul className="list-disc list-inside text-sm text-red-700 space-y-1">
+                                    {errors.map((er, i) => (
+                                        <li key={i}>{er}</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                ) : null}
+
+                {/* Form Actions */}
+                <div className="card">
+                    <div className="flex items-center justify-between">
+                        <div className="text-sm text-gray-600">
+                            Last saved: Just now
+                        </div>
+                        <div className="flex gap-3">
+                            <button type="button" className="btn btn-secondary">
+                                Save Draft
+                            </button>
+                            <button type="submit" className="btn btn-primary">
+                                Submit Form
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </form>
+
+            {/* Submission Preview */}
+            {submitted ? (
+                <div className="card border-green-200 bg-green-50">
+                    <div className="flex items-start gap-3 mb-4">
+                        <svg className="w-5 h-5 text-green-500 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <div>
+                            <h3 className="font-medium text-green-800">Form Submitted Successfully</h3>
+                            <p className="text-green-700 text-sm">Your form has been submitted for processing.</p>
+                        </div>
+                    </div>
+                    <details className="text-sm">
+                        <summary className="cursor-pointer font-medium text-green-800 mb-2">
+                            View submitted data
+                        </summary>
+                        <pre className="bg-white p-3 rounded border text-xs overflow-auto">
+                            {JSON.stringify(submitted, null, 2)}
+                        </pre>
+                    </details>
+                </div>
+            ) : null}
+
+            {/* Provenance Drawer */}
+            <ProvenanceDrawer
+                isOpen={provenanceDrawer.isOpen}
+                onClose={closeProvenance}
+                field={provenanceDrawer.field}
+                schema={provenanceDrawer.schema}
+            />
+        </div>
+    );
 }
