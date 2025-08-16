@@ -7,6 +7,7 @@ async function fetchSchema(schemaType) {
   if (!res.ok) {
     throw new Error(`Failed to load schema: ${res.status}`);
   }
+  console.log(res);
   const data = await res.json();
   const raw = data?.schema?.schema_data;
   const schemaBlob = typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -76,7 +77,12 @@ export default async function Page({ params }) {
           </div>
 
           <div className="p-6">
-            <FormRenderer schemaBlob={schemaBlob} />
+            <FormRenderer
+              schemaBlob={schemaBlob}
+              schemaType={schemaType}
+              targetDate={tgt}
+              apiBase={process.env.NEXT_PUBLIC_API_BASE || "http://localhost:5000"}
+            />
           </div>
         </div>
       </div>

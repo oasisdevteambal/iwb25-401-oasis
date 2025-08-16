@@ -194,7 +194,7 @@ function Field({ name, schema, value, required, onChange, onShowProvenance }) {
     );
 }
 
-export default function FormRenderer({ schemaBlob }) {
+export default function FormRenderer({ schemaBlob, schemaType, targetDate, apiBase }) {
     const jsonSchema = schemaBlob?.jsonSchema || { type: "object", properties: {} };
     const uiSchema = schemaBlob?.uiSchema || {};
     const required = Array.isArray(jsonSchema?.required) ? jsonSchema.required : [];
@@ -205,6 +205,9 @@ export default function FormRenderer({ schemaBlob }) {
     const [formData, setFormData] = useState({});
     const [errors, setErrors] = useState([]);
     const [submitted, setSubmitted] = useState(null);
+    const [calcLoading, setCalcLoading] = useState(false);
+    const [calcError, setCalcError] = useState(null);
+    const [calcResult, setCalcResult] = useState(null);
     const [expandedGroups, setExpandedGroups] = useState(
         Object.fromEntries(Object.keys(fieldGroups).map(group => [group, true]))
     );
@@ -242,12 +245,46 @@ export default function FormRenderer({ schemaBlob }) {
         return errs;
     }
 
-    function handleSubmit(e) {
+    async function handleSubmit(e) {
         e.preventDefault();
+        setCalcError(null);
+        setCalcResult(null);
         const errs = validate();
         setErrors(errs);
-        if (errs.length === 0) {
-            setSubmitted({ ...formData });
+        if (errs.length > 0) return;
+
+        // Prepare payload for backend calculation
+        const cleanedData = Object.fromEntries(
+            Object.entries(formData).filter(([_, v]) => v !== undefined && v !== "")
+        );
+
+        const body = {
+            schemaType: schemaType || schemaBlob?.metadata?.schemaType || "income_tax",
+            data: cleanedData
+        };
+        const dateStr = targetDate && typeof targetDate === "string" && targetDate !== "—" ? targetDate : null;
+        if (dateStr) body.date = dateStr;
+
+        setCalcLoading(true);
+        try {
+            const url = "/api/calculate"; // Server-side proxy avoids CORS
+            const res = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            });
+            const json = await res.json().catch(() => ({}));
+            if (!res.ok || json?.success === false) {
+                const msg = json?.message || `Calculation failed (${res.status})`;
+                setCalcError(msg);
+            } else {
+                setCalcResult(json);
+                setSubmitted({ ...cleanedData });
+            }
+        } catch (err) {
+            setCalcError(err?.message || "Network error");
+        } finally {
+            setCalcLoading(false);
         }
     }
 
@@ -312,10 +349,10 @@ export default function FormRenderer({ schemaBlob }) {
                                     {groupFields.length} fields
                                 </span>
                                 <div className={`w-3 h-3 rounded-full ${groupFields.every(field => formData[field] !== undefined && formData[field] !== "")
-                                        ? 'bg-green-500'
-                                        : groupFields.some(field => formData[field] !== undefined && formData[field] !== "")
-                                            ? 'bg-yellow-500'
-                                            : 'bg-gray-300'
+                                    ? 'bg-green-500'
+                                    : groupFields.some(field => formData[field] !== undefined && formData[field] !== "")
+                                        ? 'bg-yellow-500'
+                                        : 'bg-gray-300'
                                     }`} />
                             </div>
                             <svg
@@ -366,6 +403,21 @@ export default function FormRenderer({ schemaBlob }) {
                     </div>
                 ) : null}
 
+                {/* Calculation Error */}
+                {calcError ? (
+                    <div className="card border-red-200 bg-red-50">
+                        <div className="flex items-start gap-3">
+                            <svg className="w-5 h-5 text-red-500 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <div>
+                                <h3 className="font-medium text-red-800 mb-2">Calculation failed</h3>
+                                <p className="text-sm text-red-700">{String(calcError)}</p>
+                            </div>
+                        </div>
+                    </div>
+                ) : null}
+
                 {/* Form Actions */}
                 <div className="card">
                     <div className="flex items-center justify-between">
@@ -376,33 +428,58 @@ export default function FormRenderer({ schemaBlob }) {
                             <button type="button" className="btn btn-secondary">
                                 Save Draft
                             </button>
-                            <button type="submit" className="btn btn-primary">
-                                Submit Form
+                            <button type="submit" className="btn btn-primary" disabled={calcLoading}>
+                                {calcLoading ? "Calculating..." : "Submit & Calculate"}
                             </button>
                         </div>
                     </div>
                 </div>
             </form>
 
-            {/* Submission Preview */}
-            {submitted ? (
+            {/* Calculation Result */}
+            {calcResult ? (
                 <div className="card border-green-200 bg-green-50">
                     <div className="flex items-start gap-3 mb-4">
                         <svg className="w-5 h-5 text-green-500 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
                         <div>
-                            <h3 className="font-medium text-green-800">Form Submitted Successfully</h3>
-                            <p className="text-green-700 text-sm">Your form has been submitted for processing.</p>
+                            <h3 className="font-medium text-green-800">Calculation Complete</h3>
+                            <p className="text-green-700 text-sm">Schema v{calcResult?.schemaVersion} • {calcResult?.createdAt}</p>
                         </div>
                     </div>
-                    <details className="text-sm">
-                        <summary className="cursor-pointer font-medium text-green-800 mb-2">
-                            View submitted data
-                        </summary>
-                        <pre className="bg-white p-3 rounded border text-xs overflow-auto">
-                            {JSON.stringify(submitted, null, 2)}
-                        </pre>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="bg-white p-3 rounded border">
+                            <div className="text-sm text-gray-600">Final Tax</div>
+                            <div className="text-2xl font-semibold text-gray-900">{formatCurrency(calcResult?.result)}</div>
+                        </div>
+                        <div className="bg-white p-3 rounded border">
+                            <div className="text-sm text-gray-600">Execution ID</div>
+                            <div className="text-sm font-mono text-gray-900 break-all">{calcResult?.executionId}</div>
+                        </div>
+                    </div>
+                    {Array.isArray(calcResult?.breakdown) && calcResult.breakdown.length > 0 && (
+                        <div className="mt-4">
+                            <h4 className="font-medium text-green-800 mb-2">Breakdown</h4>
+                            <div className="bg-white p-3 rounded border text-sm overflow-auto">
+                                <ul className="space-y-2">
+                                    {calcResult.breakdown.map((s, i) => (
+                                        <li key={i} className="flex items-start justify-between gap-4">
+                                            <div>
+                                                <div className="font-medium text-gray-900">{s.name}</div>
+                                                <div className="text-gray-600">{s.expression}{s.substituted ? ` = ${s.substituted}` : ""}</div>
+                                            </div>
+                                            <div className="text-gray-900 font-semibold whitespace-nowrap">{formatCurrency(s.result)}</div>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        </div>
+                    )}
+
+                    <details className="text-sm mt-4">
+                        <summary className="cursor-pointer font-medium text-green-800 mb-2">Inputs</summary>
+                        <pre className="bg-white p-3 rounded border text-xs overflow-auto">{JSON.stringify(calcResult?.inputs, null, 2)}</pre>
                     </details>
                 </div>
             ) : null}
@@ -416,4 +493,13 @@ export default function FormRenderer({ schemaBlob }) {
             />
         </div>
     );
+}
+
+function formatCurrency(val) {
+    if (typeof val !== "number" && typeof val !== "bigint") return String(val ?? "—");
+    try {
+        return new Intl.NumberFormat("en-LK", { style: "currency", currency: "LKR", maximumFractionDigits: 2 }).format(Number(val));
+    } catch {
+        return String(val);
+    }
 }
