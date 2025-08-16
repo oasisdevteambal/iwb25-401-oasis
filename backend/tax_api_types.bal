@@ -1,26 +1,26 @@
-// Types for tax calculation API
+// Module-wide types for the tax calculation API
 
-type CalculationRequest record {
-    string schemaType; // income_tax | vat | paye
-    int? schemaVersion?; // optional explicit version
-    string? date?; // optional YYYY-MM-DD
-    json data; // form data object
-    string? executionId?; // optional client id
+public type CalculationRequest record {
+    string schemaType;
+    int? schemaVersion?;
+    string? date?;
+    json data;
+    string? executionId?;
 };
 
-type Step record {
+public type Step record {
     string name;
     string expression;
     string substituted;
     decimal result;
 };
 
-type FormulaRef record {
+public type FormulaRef record {
     string name;
     string expression;
 };
 
-type CalculationResult record {
+public type CalculationResult record {
     boolean success;
     string schemaId;
     int schemaVersion;
@@ -33,10 +33,9 @@ type CalculationResult record {
     string createdAt;
 };
 
-type ErrorResponse record {
+public type ErrorResponse record {
     boolean success;
     string code;
     string message;
     json? details?;
 };
-

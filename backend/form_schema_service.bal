@@ -149,7 +149,7 @@ function fetchActiveRules(string calcType, string targetDate) returns record {Ru
                 bracket_order: <int>row["bracket_order"]
             };
             BracketRow[] list = byRule[rid] ?: [];
-            list.push(b);
+            list[list.length()] = b;
             byRule[rid] = list;
         });
         if (be is error) {
@@ -162,7 +162,8 @@ function fetchActiveRules(string calcType, string targetDate) returns record {Ru
 // Build JSON Schema + UI schema strictly
 function buildJsonSchema(string calcType, record {RuleRow[] rules; map<BracketRow[]> bracketsByRule;} rulesBundle, string targetDate) returns json|error {
     RuleRow[] rules = rulesBundle.rules;
-    // Minimal strict checks for income_tax brackets presence
+
+    // Strict check: for income tax, ensure at least one bracket exists (to keep calculator grounded)
     if (calcType == "income_tax") {
         int totalBrackets = 0;
         foreach RuleRow r in rules {
@@ -170,81 +171,210 @@ function buildJsonSchema(string calcType, record {RuleRow[] rules; map<BracketRo
             totalBrackets += br.length();
         }
         if (totalBrackets == 0) {
-            return error("No brackets available to generate income tax form");
+            return error("No tax brackets found for income tax on " + targetDate);
         }
     }
 
-    // Define core fields for income_tax; extendable later
-    json jsonSchema;
-    json uiSchema = {};
-    if (calcType == "income_tax") {
-        jsonSchema = {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "title": "Sri Lanka Income Tax",
-            "type": "object",
-            "properties": {
-                "tax_year": {"type": "string", "pattern": "^20[0-9]{2}$", "title": "Tax Year"},
-                "residency_status": {"type": "string", "enum": ["resident", "non_resident"], "title": "Residency"},
-                "employment_income": {"type": "number", "minimum": 0, "title": "Employment Income (LKR)"},
-                "business_income": {"type": "number", "minimum": 0, "title": "Business Income (LKR)"},
-                "rental_income": {"type": "number", "minimum": 0, "title": "Rental Income (LKR)"},
-                "interest_income": {"type": "number", "minimum": 0, "title": "Interest (LKR)"},
-                "dividend_income": {"type": "number", "minimum": 0, "title": "Dividends (LKR)"},
-                "capital_gains": {"type": "number", "minimum": 0, "title": "Capital Gains (LKR)"},
-                "deductions": {"type": "number", "minimum": 0, "title": "Deductions (LKR)"}
-            },
-            "required": ["tax_year", "residency_status"],
-            "additionalProperties": false
-        };
-        uiSchema = {
-            "ui:order": [
-                "tax_year",
-                "residency_status",
-                "employment_income",
-                "business_income",
-                "rental_income",
-                "interest_income",
-                "dividend_income",
-                "capital_gains",
-                "deductions"
-            ]
-        };
-    } else if (calcType == "paye") {
-        jsonSchema = {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "title": "Sri Lanka PAYE",
-            "type": "object",
-            "properties": {
-                "pay_period": {"type": "string", "pattern": "^20[0-9]{2}-([0][1-9]|1[0-2])$", "title": "Pay Period (YYYY-MM)"},
-                "gross_pay": {"type": "number", "minimum": 0, "title": "Gross Pay (LKR)"},
-                "allowances": {"type": "number", "minimum": 0, "title": "Allowances (LKR)"},
-                "employee_contributions": {"type": "number", "minimum": 0, "title": "Employee Contributions (LKR)"}
-            },
-            "required": ["pay_period", "gross_pay"],
-            "additionalProperties": false
-        };
-    } else { // vat
-        jsonSchema = {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "title": "Sri Lanka VAT",
-            "type": "object",
-            "properties": {
-                "period": {"type": "string", "pattern": "^20[0-9]{2}-([0][1-9]|1[0-2])$", "title": "Period (YYYY-MM)"},
-                "taxable_turnover": {"type": "number", "minimum": 0, "title": "Taxable Turnover (LKR)"},
-                "zero_rated": {"type": "number", "minimum": 0, "title": "Zero Rated (LKR)"},
-                "exempt": {"type": "number", "minimum": 0, "title": "Exempt (LKR)"},
-                "input_tax": {"type": "number", "minimum": 0, "title": "Input Tax (LKR)"}
-            },
-            "required": ["period", "taxable_turnover"],
-            "additionalProperties": false
-        };
+    // Aggregators built from LLM-extracted rule_data
+    map<json> properties = {};
+    string[] reqVars = [];
+    string[] uiOrderAgg = [];
+    json[] formulasAgg = [];
+
+    // Collect across all active rules
+    foreach RuleRow r in rules {
+        json rdJ = r.rule_data;
+        if (!(rdJ is map<json>)) {
+            continue;
+        }
+        map<json> rd = <map<json>>rdJ;
+
+        // required_variables
+        json? rv = rd["required_variables"];
+        if (rv is json[]) {
+            foreach json it in rv {
+                if (it is string) {
+                    reqVars = addUniqueString(reqVars, it);
+                }
+            }
+        }
+
+        // field_metadata -> properties
+        json? fm = rd["field_metadata"];
+        if (fm is map<json>) {
+            foreach var entry in fm.entries() {
+                string fname = entry[0];
+                json metaJ = entry[1];
+                if (!(metaJ is map<json>)) {
+                    continue;
+                }
+                map<json> meta = <map<json>>metaJ;
+
+                map<json> prop = {};
+                json? t = meta["type"];
+                if (t is string) {
+                    prop["type"] = t;
+                }
+                json? ttl = meta["title"];
+                if (ttl is string) {
+                    prop["title"] = ttl;
+                }
+                json? min = meta["minimum"];
+                if (min is int|float|decimal) {
+                    prop["minimum"] = min;
+                }
+                json? pat = meta["pattern"];
+                if (pat is string) {
+                    prop["pattern"] = pat;
+                }
+                json? desc = meta["description"];
+                if (desc is string) {
+                    prop["description"] = desc;
+                }
+                json? en = meta["enum"];
+                if (en is json[]) {
+                    prop["enum"] = en;
+                }
+
+                // Basic defaulting if type missing
+                if (prop["type"] is ()) {
+                    // Heuristic: income-like fields -> number; else string
+                    prop["type"] = hasSuffix(fname, "_income") || fname == "deductions" || fname == "gross_pay" || fname == "taxable_turnover" ? "number" : "string";
+                }
+                if (prop["type"] is string && <string>prop["type"] == "number" && prop["minimum"] is ()) {
+                    prop["minimum"] = 0;
+                }
+
+                // Apply into properties if not already present; if present, shallow-merge to preserve first seen
+                if (properties[fname] is ()) {
+                    properties[fname] = prop;
+                } else if (properties[fname] is map<json>) {
+                    map<json> existing = <map<json>>properties[fname];
+                    foreach var kv in prop.entries() {
+                        existing[kv[0]] = kv[1];
+                    }
+                    properties[fname] = existing;
+                }
+            }
+        }
+
+        // ui_order
+        json? uo = rd["ui_order"];
+        if (uo is json[]) {
+            foreach json it in uo {
+                if (it is string) {
+                    uiOrderAgg = addUniqueString(uiOrderAgg, it);
+                }
+            }
+        }
+
+        // formulas
+        json? fml = rd["formulas"];
+        if (fml is json[]) {
+            foreach json f in fml {
+                if (f is map<json>) {
+                    map<json> fmMap = <map<json>>f;
+                    // Normalize keys id,name,expression,order
+                    json idJ = fmMap["id"] ?: (fmMap["name"] ?: "");
+                    json nmJ = fmMap["name"] ?: (fmMap["id"] ?: "");
+                    json exJ = fmMap["expression"] ?: "";
+                    json ordJ = fmMap["order"] ?: 0;
+                    formulasAgg[formulasAgg.length()] = {"id": idJ, "name": nmJ, "expression": exJ, "order": ordJ};
+                }
+            }
+        }
     }
 
+    // If field_metadata missing, attempt to synthesize from required variables
+    if (isEmptyMap(properties) && reqVars.length() > 0) {
+        foreach string v in reqVars {
+            map<json> prop = {"type": (hasSuffix(v, "_income") || v == "deductions" || v == "gross_pay" || v == "taxable_turnover") ? "number" : "string"};
+            if (<string>prop["type"] == "number") {
+                prop["minimum"] = 0;
+            }
+            prop["title"] = titleCase(replaceAllStr(v, "_", " "));
+            properties[v] = prop;
+        }
+    }
+
+    if (isEmptyMap(properties)) {
+        return error("Unable to build schema: no field metadata or required variables present in rule_data");
+    }
+
+    // Build required list from reqVars intersecting with properties
+    string[] required = [];
+    foreach string rvn in reqVars {
+        if (!(properties[rvn] is ())) {
+            required[required.length()] = rvn;
+        }
+    }
+
+    // Build ui:order - prefer provided; else required first then the rest alphabetically
+    string[] uiOrder = [];
+    if (uiOrderAgg.length() > 0) {
+        foreach string n in uiOrderAgg {
+            if (!(properties[n] is ())) {
+                uiOrder = addUniqueString(uiOrder, n);
+            }
+        }
+        // append any missing fields
+        foreach var ent in properties.entries() {
+            string k = ent[0];
+            boolean seen = false;
+            foreach string x in uiOrder {
+                if (x == k) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen) {
+                uiOrder[uiOrder.length()] = k;
+            }
+        }
+    } else {
+        // required first
+        foreach string n in required {
+            uiOrder[uiOrder.length()] = n;
+        }
+        // then others alphabetically
+        string[] others = [];
+        foreach var ent in properties.entries() {
+            string k = ent[0];
+            boolean inReq = false;
+            foreach string r in required {
+                if (r == k) {
+                    inReq = true;
+                    break;
+                }
+            }
+            if (!inReq) {
+                others[others.length()] = k;
+            }
+        }
+        others = sortStrings(others);
+        foreach string k in others {
+            uiOrder[uiOrder.length()] = k;
+        }
+    }
+
+    // Sort formulas by 'order' if present
+    formulasAgg = sortFormulasByOrder(formulasAgg);
+
+    // Compose jsonSchema and uiSchema
+    json jsonSchema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": titleForCalcType(calcType),
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": false
+    };
+    json uiSchema = {"ui:order": uiOrder};
+
     // Schema metadata including provenance
-    // Build sourceRuleIds as json array
     json[] srcIds = [];
     foreach RuleRow r in rules {
-        srcIds.push(r.id);
+        srcIds[srcIds.length()] = r.id;
     }
     json metadata = {
         "schemaType": calcType,
@@ -253,7 +383,156 @@ function buildJsonSchema(string calcType, record {RuleRow[] rules; map<BracketRo
         "sourceRuleIds": srcIds
     };
 
-    return {jsonSchema: jsonSchema, uiSchema: uiSchema, metadata: metadata};
+    return {jsonSchema: jsonSchema, uiSchema: uiSchema, metadata: metadata, calculationRules: formulasAgg, requiredVariables: reqVars};
+}
+
+// ---------- Helpers for dynamic schema ----------
+
+function addUniqueString(string[] arr, string v) returns string[] {
+    foreach string s in arr {
+        if (s == v) {
+            return arr;
+        }
+    }
+    arr[arr.length()] = v;
+    return arr;
+}
+
+function titleCase(string s) returns string {
+    // Title-case by capitalizing first character and characters after spaces.
+    string out = "";
+    boolean cap = true;
+    int i = 0;
+    int n = s.length();
+    while (i < n) {
+        string ch = s.substring(i, i + 1);
+        if (cap && ch != " ") {
+            out += ch.toUpperAscii();
+            cap = false;
+        } else {
+            out += ch.toLowerAscii();
+        }
+        if (ch == " ") {
+            cap = true;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function titleForCalcType(string calcType) returns string {
+    string t = replaceAllStr(calcType, "_", " ");
+    return "Sri Lanka " + titleCase(t);
+}
+
+function sortFormulasByOrder(json[] formulas) returns json[] {
+    // Simple bubble sort for small arrays
+    int n = formulas.length();
+    int i = 0;
+    while (i < n) {
+        int j = 0;
+        while (j < n - i - 1) {
+            json a = formulas[j];
+            json b = formulas[j + 1];
+            int ao = getOrder(a);
+            int bo = getOrder(b);
+            if (ao > bo) {
+                json temp = formulas[j];
+                formulas[j] = formulas[j + 1];
+                formulas[j + 1] = temp;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return formulas;
+}
+
+function getOrder(json f) returns int {
+    if (f is map<json>) {
+        json? o = (<map<json>>f)["order"];
+        if (o is int) {
+            return o;
+        }
+        if (o is string) {
+            int|error oi = int:fromString(o);
+            return oi is int ? oi : 0;
+        }
+    }
+    return 0;
+}
+
+function isEmptyMap(map<json> m) returns boolean {
+    int c = 0;
+    foreach var _ in m.entries() {
+        c += 1;
+        if (c > 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function replaceAllStr(string original, string searchFor, string replaceWith) returns string {
+    if (searchFor.length() == 0) {
+        return original;
+    }
+    string result = "";
+    int i = 0;
+    int searchLen = searchFor.length();
+    int total = original.length();
+    while (i < total) {
+        boolean isMatch = false;
+        if (i + searchLen <= total) {
+            string seg = original.substring(i, i + searchLen);
+            if (seg == searchFor) {
+                isMatch = true;
+            }
+        }
+        if (isMatch) {
+            result += replaceWith;
+            i = i + searchLen;
+        } else {
+            result += original.substring(i, i + 1);
+            i = i + 1;
+        }
+    }
+    return result;
+}
+
+// splitStr helper removed to avoid extra complexity; titleCase rewritten to not depend on it.
+
+function hasSuffix(string s, string suffix) returns boolean {
+    int sl = s.length();
+    int tl = suffix.length();
+    if (tl == 0) {
+        return true;
+    }
+    if (tl > sl) {
+        return false;
+    }
+    string end = s.substring(sl - tl, sl);
+    return end == suffix;
+}
+
+function sortStrings(string[] xs) returns string[] {
+    int n = xs.length();
+    int i = 0;
+    while (i < n) {
+        int j = 0;
+        while (j < n - i - 1) {
+            string a = xs[j];
+            string b = xs[j + 1];
+            if (a > b) {
+                string tmp = xs[j];
+                xs[j] = xs[j + 1];
+                xs[j + 1] = tmp;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return xs;
 }
 
 function persistAndActivate(string calcType, json schemaData) returns json|error {

@@ -475,13 +475,32 @@ function extractTaxRulesForDocument(string documentId, DocumentChunk[] chunks)
             bracketJsonArr.push(jb);
         }
 
+        // Deterministic formula strings for evaluator (no fallbacks)
+        // Base variables are aligned with form_schema_service income_tax properties
+        json[] formulas = [
+            {"id": "gross", "name": "gross", "expression": "employment_income + business_income + rental_income + interest_income + dividend_income + capital_gains", "order": 1},
+            {"id": "taxable", "name": "taxable", "expression": "max(0, gross - deductions)", "order": 2},
+            {"id": "final_tax", "name": "tax", "expression": "progressiveTax(taxable, '" + ruleId + "')", "order": 3}
+        ];
+        json requiredVars = [
+            "employment_income",
+            "business_income",
+            "rental_income",
+            "interest_income",
+            "dividend_income",
+            "capital_gains",
+            "deductions"
+        ];
+
         json ruleData = {
             "schema": 1,
             "type": ruleType,
             "category": ruleCategory,
             "source": {"document_id": documentId, "chunk_id": chunk.id, "sequence": chunk.sequence},
             "parsing": {"method": "heuristic_v1", "lines_processed": countLines(chunk.chunkText)},
-            "brackets": bracketJsonArr
+            "brackets": bracketJsonArr,
+            "formulas": formulas,
+            "required_variables": requiredVars
         };
 
         string ruleDataStr = ruleData.toString();
