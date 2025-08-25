@@ -37,9 +37,6 @@ export default function RootLayout({ children }) {
                 <a href="/forms" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
                   Forms
                 </a>
-                <a href="/upload" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
-                  Upload
-                </a>
                 <a href="/history" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
                   History
                 </a>
@@ -91,7 +88,7 @@ export default function RootLayout({ children }) {
               <div>
                 <h4 className="font-medium text-gray-900 mb-3">Tools</h4>
                 <ul className="space-y-2 text-sm text-gray-600">
-                  <li><a href="/upload" className="hover:text-blue-600">Document Upload</a></li>
+                  <li><a href="/admin" className="hover:text-blue-600">Document Upload</a></li>
                   <li><a href="/history" className="hover:text-blue-600">Submission History</a></li>
                 </ul>
               </div>

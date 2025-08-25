@@ -1,4 +1,5 @@
 import ballerina/http;
+import ballerina/lang.value as v;
 import ballerina/sql;
 import ballerina/time;
 
@@ -93,18 +94,16 @@ function buildCurrentWithoutActivating(string calcType, string targetDate) retur
 
 // Fetch active rules for a type and date from tax_rules and tax_brackets
 function fetchActiveRules(string calcType, string targetDate) returns record {RuleRow[] rules; map<BracketRow[]> bracketsByRule;}|error {
-    // For now, income_tax uses rules with rule_type like '%brackets%' and category 'income_tax'
-    // Extend for vat/paye later.
-    string ruleTypeLike = calcType == "income_tax" ? "%brackets%" : "%";
-    sql:ParameterizedQuery q = `
+    // Prefer aggregated rules for the date; if none exist, fall back to evidence rules strictly
+    sql:ParameterizedQuery qa = `
 		SELECT r.id, r.rule_type, r.rule_category, r.title, r.description, r.rule_data, r.effective_date, r.expiry_date
 		FROM tax_rules r
-		WHERE (r.rule_category = ${calcType} OR r.rule_type ILIKE ${ruleTypeLike})
-		  AND (r.effective_date IS NULL OR r.effective_date <= ${targetDate}::date)
-		  AND (r.expiry_date IS NULL OR r.expiry_date >= ${targetDate}::date)
+		WHERE r.rule_category = ${calcType}
+		  AND r.rule_type ILIKE 'aggregated%'
+		  AND r.effective_date = ${targetDate}::date
 	`;
     RuleRow[] rules = [];
-    stream<record {}, sql:Error?> rs = dbClient->query(q);
+    stream<record {}, sql:Error?> rs = dbClient->query(qa);
     error? e = rs.forEach(function(record {} row) {
         RuleRow item = {
             id: <string>row["id"],
@@ -122,20 +121,20 @@ function fetchActiveRules(string calcType, string targetDate) returns record {Ru
         return error("Failed to fetch rules: " + e.message());
     }
     if (rules.length() == 0) {
-        return error("No active rules found for " + calcType + " on " + targetDate);
+        return error("No aggregated rules found for " + calcType + " on " + targetDate + ". Run aggregation first.");
     }
     // Load brackets for the found rules (income_tax only for now)
     map<BracketRow[]> byRule = {};
     if (calcType == "income_tax") {
         sql:ParameterizedQuery brq = `
-			SELECT b.id, b.rule_id, b.min_income, b.max_income, b.rate, b.fixed_amount, b.bracket_order
-			FROM tax_brackets b
-			JOIN tax_rules r2 ON r2.id = b.rule_id
-			WHERE (r2.rule_category = ${calcType} OR r2.rule_type ILIKE ${ruleTypeLike})
-			  AND (r2.effective_date IS NULL OR r2.effective_date <= ${targetDate}::date)
-			  AND (r2.expiry_date IS NULL OR r2.expiry_date >= ${targetDate}::date)
-			ORDER BY b.rule_id, b.bracket_order
-		`;
+            SELECT b.id, b.rule_id, b.min_income, b.max_income, b.rate, b.fixed_amount, b.bracket_order
+            FROM tax_brackets b
+            JOIN tax_rules r2 ON r2.id = b.rule_id
+            WHERE r2.rule_category = ${calcType}
+              AND r2.rule_type ILIKE 'aggregated%'
+              AND r2.effective_date = ${targetDate}::date
+            ORDER BY b.rule_id, b.bracket_order
+        `;
         stream<record {}, sql:Error?> brs = dbClient->query(brq);
         error? be = brs.forEach(function(record {} row) {
             string rid = <string>row["rule_id"];
@@ -184,6 +183,13 @@ function buildJsonSchema(string calcType, record {RuleRow[] rules; map<BracketRo
     // Collect across all active rules
     foreach RuleRow r in rules {
         json rdJ = r.rule_data;
+        // Some drivers may deliver jsonb as text; parse when needed
+        if (rdJ is string) {
+            json|error parsed = v:fromJsonString(<string>rdJ);
+            if (parsed is json) {
+                rdJ = parsed;
+            }
+        }
         if (!(rdJ is map<json>)) {
             continue;
         }

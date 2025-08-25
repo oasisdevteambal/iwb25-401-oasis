@@ -92,7 +92,15 @@ postgresql:Client dbClient = check new (
     port = 5432,
     database = "postgres",
     username = "postgres",
-    password = SUPABASE_DB_PASSWORD
+    password = SUPABASE_DB_PASSWORD,
+    connectionPool = {maxOpenConnections: 10},
+    options = {
+        socketTimeout: 30,
+        ssl: {mode: "REQUIRE"},
+        connectTimeout: 30,
+        loginTimeout: 10,
+        keepAliveTcpProbe: true
+    }
 );
 
 # Initialize database connection
@@ -427,7 +435,10 @@ function buildRuleEmbeddingText(string title, string description,
 // documentId - The source document ID
 // chunks - Chunks belonging to the document
 // return - Aggregated persistence result or error
-function extractTaxRulesForDocument(string documentId, DocumentChunk[] chunks)
+// NOTE [DEPRECATED IN CURRENT PIPELINE]: This heuristic extractor is no longer invoked during upload.
+// Evidence rules are created/updated via the admin flow: extract-metadata -> approve -> apply-metadata.
+// We keep this function for reference only; consider removing once the admin LLM path fully replaces it.
+function extractTaxRulesForDocument(string documentId, DocumentChunk[] chunks, string calcType)
         returns RuleExtractionResult|error {
     log:printInfo("🧠 Extracting tax rules from chunks for document: " + documentId);
 
@@ -453,9 +464,9 @@ function extractTaxRulesForDocument(string documentId, DocumentChunk[] chunks)
 
         // Build deterministic rule id per chunk
         string ruleId = sanitizeId(documentId + "_brackets_" + chunk.sequence.toString());
-        string ruleType = "income_tax_brackets";
-        string ruleCategory = "income_tax";
-        string title = "Income Tax Brackets - Chunk " + chunk.sequence.toString();
+        string ruleCategory = calcType;
+        string ruleType = calcType == "income_tax" ? "income_tax_brackets" : (calcType + "_rules");
+        string title = (calcType == "income_tax" ? "Income Tax Brackets" : calcType.toUpperAscii()) + " - Chunk " + chunk.sequence.toString();
         string description = parsed.length().toString() + " bracket(s) extracted from chunk text";
 
         // Build rule_data JSON
@@ -475,22 +486,38 @@ function extractTaxRulesForDocument(string documentId, DocumentChunk[] chunks)
             bracketJsonArr.push(jb);
         }
 
-        // Deterministic formula strings for evaluator (no fallbacks)
-        // Base variables are aligned with form_schema_service income_tax properties
-        json[] formulas = [
-            {"id": "gross", "name": "gross", "expression": "employment_income + business_income + rental_income + interest_income + dividend_income + capital_gains", "order": 1},
-            {"id": "taxable", "name": "taxable", "expression": "max(0, gross - deductions)", "order": 2},
-            {"id": "final_tax", "name": "tax", "expression": "progressiveTax(taxable, '" + ruleId + "')", "order": 3}
-        ];
-        json requiredVars = [
-            "employment_income",
-            "business_income",
-            "rental_income",
-            "interest_income",
-            "dividend_income",
-            "capital_gains",
-            "deductions"
-        ];
+        // Deterministic inputs for all types; deterministic formulas only for income_tax to keep runtime exact
+        json[] formulas = [];
+        json requiredVars = [];
+        if (calcType == "income_tax") {
+            formulas = [
+                {"id": "gross", "name": "gross", "expression": "employment_income + business_income + rental_income + interest_income + dividend_income + capital_gains", "order": 1},
+                {"id": "taxable", "name": "taxable", "expression": "max(0, gross - deductions)", "order": 2},
+                {"id": "final_tax", "name": "tax", "expression": "progressiveTax(taxable, '" + ruleId + "')", "order": 3}
+            ];
+            requiredVars = [
+                "employment_income",
+                "business_income",
+                "rental_income",
+                "interest_income",
+                "dividend_income",
+                "capital_gains",
+                "deductions"
+            ];
+        } else if (calcType == "paye") {
+            // Minimal canonical inputs for PAYE so the schema builder can synthesize fields
+            requiredVars = [
+                "gross_pay",
+                "deductions"
+            ];
+            // formulas intentionally empty until deterministic PAYE engine is defined
+        } else if (calcType == "vat") {
+            // Minimal canonical inputs for VAT
+            requiredVars = [
+                "taxable_turnover"
+            ];
+            // formulas intentionally empty until deterministic VAT engine is defined
+        }
 
         json ruleData = {
             "schema": 1,
@@ -2023,6 +2050,144 @@ type ChunkConfig record {
 
 // Document service for handling file uploads and immediate processing
 service /api/v1/documents on httpListener {
+    # Get document processing summary (total, processed, pending)
+    # + return - JSON object with counts (totalDocuments, processedDocuments, pendingDocuments)
+    # + return - http:InternalServerError on failure
+    resource function get summary() returns json|http:InternalServerError {
+        do {
+            int total = 0;
+            int processed = 0;
+            stream<record {}, sql:Error?> s = dbClient->query(`
+                SELECT COUNT(*) AS total,
+                       COALESCE(SUM(CASE WHEN processed THEN 1 ELSE 0 END),0) AS processed
+                FROM documents`);
+            error? e = s.forEach(function(record {} row) {
+                total = <int>row["total"];
+                processed = <int>row["processed"];
+            });
+            if (e is error) {
+                http:InternalServerError resp = {
+                    body: {"success": false, "error": e.message()}
+                };
+                return resp;
+            }
+            int pending = total - processed;
+            return {success: true, totalDocuments: total, processedDocuments: processed, pendingDocuments: pending};
+        } on fail error e {
+            http:InternalServerError resp = {
+                body: {"success": false, "error": e.message()}
+            };
+            return resp;
+        }
+    }
+
+    # List documents with pagination and optional filename search
+    # + 'limit - max rows (default 50, max 200)
+    # + offset - start offset (default 0)
+    # + q - optional search string (matches filename ILIKE)
+    # + return - { items: [...], pagination: {...} }
+    resource function get list(int? 'limit, int? offset, string? q)
+            returns json|http:BadRequest|http:InternalServerError {
+        do {
+            int lim = 'limit ?: 50;
+            if (lim < 1) {
+                lim = 1;
+            }
+            if (lim > 200) {
+                lim = 200;
+            }
+            int off = offset ?: 0;
+            if (off < 0) {
+                off = 0;
+            }
+            string? qq = (q is string && q.trim().length() > 0) ? q : ();
+
+            // Total count (for pagination)
+            int total = 0;
+            if (qq is string) {
+                stream<record {}, sql:Error?> cs = dbClient->query(`
+                    SELECT COUNT(*) AS c FROM documents d WHERE d.filename ILIKE '%' || ${qq} || '%'`);
+                error? ce = cs.forEach(function(record {} row) {
+                    total = <int>row["c"];
+                });
+                if (ce is error) {
+                    return <http:InternalServerError>{body: {"success": false, "error": ce.message()}};
+                }
+            } else {
+                stream<record {}, sql:Error?> cs = dbClient->query(`SELECT COUNT(*) AS c FROM documents`);
+                error? ce = cs.forEach(function(record {} row) {
+                    total = <int>row["c"];
+                });
+                if (ce is error) {
+                    return <http:InternalServerError>{body: {"success": false, "error": ce.message()}};
+                }
+            }
+
+            // Page query: avoid ambiguous NULL typing by branching on search presence
+            sql:ParameterizedQuery qy;
+            if (qq is string) {
+                qy = `
+                    SELECT d.id, d.filename, d.file_path, d.content_type, d.upload_date,
+                           d.processed, d.status, d.total_chunks, d.document_type,
+                           d.created_at, d.updated_at,
+                           (SELECT COUNT(*) FROM tax_rules r WHERE r.document_source_id = d.id) AS rules_count,
+                           COALESCE((
+                               SELECT json_agg(x.rc) FROM (
+                                   SELECT DISTINCT r.rule_category AS rc
+                                   FROM tax_rules r WHERE r.document_source_id = d.id
+                               ) x
+                           ), '[]'::json) AS categories
+                    FROM documents d
+                    WHERE d.filename ILIKE '%' || ${qq} || '%'
+                    ORDER BY d.upload_date DESC NULLS LAST, d.created_at DESC
+                    LIMIT ${lim} OFFSET ${off}`;
+            } else {
+                qy = `
+                    SELECT d.id, d.filename, d.file_path, d.content_type, d.upload_date,
+                           d.processed, d.status, d.total_chunks, d.document_type,
+                           d.created_at, d.updated_at,
+                           (SELECT COUNT(*) FROM tax_rules r WHERE r.document_source_id = d.id) AS rules_count,
+                           COALESCE((
+                               SELECT json_agg(x.rc) FROM (
+                                   SELECT DISTINCT r.rule_category AS rc
+                                   FROM tax_rules r WHERE r.document_source_id = d.id
+                               ) x
+                           ), '[]'::json) AS categories
+                    FROM documents d
+                    ORDER BY d.upload_date DESC NULLS LAST, d.created_at DESC
+                    LIMIT ${lim} OFFSET ${off}`;
+            }
+
+            json[] items = [];
+            stream<record {}, sql:Error?> rs = dbClient->query(qy);
+            error? e = rs.forEach(function(record {} row) {
+                json cats = row["categories"] is () ? <json>[] : <json>row["categories"];
+                json o = {
+                    "id": <string>row["id"],
+                    "filename": <string>row["filename"],
+                    "file_path": <string>row["file_path"],
+                    "content_type": row["content_type"] is string ? <string>row["content_type"] : "",
+                    "upload_date": row["upload_date"] is string ? <string>row["upload_date"] : (),
+                    "processed": <boolean>row["processed"],
+                    "status": <string>row["status"],
+                    "total_chunks": <int>row["total_chunks"],
+                    "document_type": <string>row["document_type"],
+                    "created_at": row["created_at"] is string ? <string>row["created_at"] : (),
+                    "updated_at": row["updated_at"] is string ? <string>row["updated_at"] : (),
+                    "rules_count": <int>row["rules_count"],
+                    "rule_categories": cats
+                };
+                items.push(o);
+            });
+            if (e is error) {
+                return <http:InternalServerError>{body: {"success": false, "error": e.message()}};
+            }
+
+            return {"success": true, "items": items, "pagination": {"total": total, "limit": lim, "offset": off}};
+        } on fail error ex {
+            return <http:InternalServerError>{body: {"success": false, "error": ex.message()}};
+        }
+    }
 
     # Test embedding generation (debug endpoint)
     # + return - Test result with embedding data or error
@@ -2295,9 +2460,10 @@ service /api/v1/documents on httpListener {
                 };
             }
 
-            // Find the file part and optional filename part
+            // Find the file part and optional filename/schemaType parts
             mime:Entity? filePart = ();
             string? providedFilename = ();
+            string? providedSchemaType = ();
 
             foreach mime:Entity part in bodyParts {
                 string|mime:HeaderNotFoundError contentDispositionResult = part.getHeader("Content-Disposition");
@@ -2311,6 +2477,16 @@ service /api/v1/documents on httpListener {
                             string|error filenameResult = string:fromBytes(textContent);
                             if (filenameResult is string) {
                                 providedFilename = filenameResult.trim();
+                            }
+                        }
+                    }
+                    // Check if this is the schemaType/category field
+                    else if (contentDisposition.includes("name=\"schemaType\"")) {
+                        byte[]|mime:ParserError textContent = part.getByteArray();
+                        if (textContent is byte[]) {
+                            string|error stRes = string:fromBytes(textContent);
+                            if (stRes is string) {
+                                providedSchemaType = stRes.trim();
                             }
                         }
                     }
@@ -2369,6 +2545,15 @@ service /api/v1/documents on httpListener {
                         "message": "Could not extract filename from upload. Please provide filename in form data."
                     }
                 };
+            }
+
+            // Resolve selected schema type (category) with validation
+            string calcType = "income_tax";
+            if (providedSchemaType is string && providedSchemaType.trim().length() > 0) {
+                string cand = providedSchemaType.toLowerAscii();
+                if (cand == "income_tax" || cand == "paye" || cand == "vat") {
+                    calcType = cand;
+                }
             }
 
             // Validate file type
@@ -2444,21 +2629,8 @@ service /api/v1/documents on httpListener {
             // Store chunks in database (strict)
             check storeChunksInDatabase(chunkingResult.chunks);
 
-            // Step 5: Extract and persist tax rules from chunks
-            RuleExtractionResult ruleSummary = check extractTaxRulesForDocument(documentId, chunkingResult.chunks);
-
-            // Auto-trigger: attempt decoupled form schema generation (non-blocking)
-            // We try income_tax for now; extend to other types as rule extraction broadens.
-            do {
-                json|error gen = generateAndActivateFormSchema("income_tax", ());
-                if (gen is error) {
-                    log:printWarn("Form schema generation skipped: " + gen.message());
-                } else {
-                    log:printInfo("Form schema generated/activated: " + gen.toString());
-                }
-            } on fail error ee {
-                log:printWarn("Form schema generation error: " + ee.message());
-            }
+            // Note: Rule extraction is now deferred to admin-controlled endpoints
+            // This allows for document review before rule extraction and better quality control
 
             // Step 5: Prepare processing results with storage information
             log:printInfo("Document processing and storage completed successfully");
@@ -2490,11 +2662,9 @@ service /api/v1/documents on httpListener {
                         extractionResult.extractedText
                 },
                 "ruleExtraction": {
-                    "chunksProcessed": ruleSummary.chunksProcessed,
-                    "candidateChunks": ruleSummary.candidateChunks,
-                    "rulesInserted": ruleSummary.rulesInserted,
-                    "bracketsInserted": ruleSummary.bracketsInserted,
-                    "errors": ruleSummary.errors
+                    "status": "deferred",
+                    "message": "Rule extraction will be performed via admin endpoints after document review",
+                    "extractionEndpoint": "/api/v1/admin/extract-rules"
                 },
                 "analysis": {
                     "documentType": structure.documentType,
@@ -2542,7 +2712,8 @@ service /api/v1/documents on httpListener {
                             chunk.chunkText
                     })
                 },
-                "metadata": extractionResult.metadata
+                "metadata": extractionResult.metadata,
+                "category": calcType
             };
 
             return result;

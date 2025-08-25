@@ -70,7 +70,7 @@ service /api/v1/tax on httpListener {
 
         // Determine target date (YYYY-MM-DD)
         string? dateOpt = getOptionalStringFromMap(pmap, "date");
-        string targetDate = resolveTargetDate(dateOpt);
+        string targetDate = calcResolveTargetDate(dateOpt);
 
         // Compute progressive tax using DB tax_brackets for active rules
         decimal|error taxOrErr = computeProgressiveTaxFromDb(taxableIncome, "income_tax", targetDate);
@@ -210,7 +210,7 @@ function maxDecimal(decimal a, decimal b) returns decimal {
     return a > b ? a : b;
 }
 
-function resolveTargetDate(string? date) returns string {
+function calcResolveTargetDate(string? date) returns string {
     if (date is string && date.trim().length() > 0) {
         return date;
     }
@@ -231,16 +231,16 @@ function getOptionalStringFromMap(map<json> m, string key) returns string? {
 // Compute progressive tax using tax_brackets from DB for a calcType and date
 function computeProgressiveTaxFromDb(decimal income, string calcType, string targetDate)
 returns decimal|error {
-    // Fetch brackets joined to rules in effect for date
+    // Strict: use only aggregated rule for the exact target date; no fallback
     sql:ParameterizedQuery q = `
-		SELECT b.min_income, b.max_income, b.rate, b.fixed_amount, b.bracket_order
-		FROM tax_brackets b
-		JOIN tax_rules r ON r.id = b.rule_id
-		WHERE (r.rule_category = ${calcType} OR r.rule_type ILIKE ${calcType + "%"})
-		  AND (r.effective_date IS NULL OR r.effective_date <= ${targetDate}::date)
-		  AND (r.expiry_date IS NULL OR r.expiry_date >= ${targetDate}::date)
-		ORDER BY b.bracket_order
-	`;
+        SELECT b.min_income, b.max_income, b.rate, b.fixed_amount, b.bracket_order
+        FROM tax_brackets b
+        JOIN tax_rules r ON r.id = b.rule_id
+        WHERE r.rule_category = ${calcType}
+          AND r.rule_type ILIKE 'aggregated%'
+          AND r.effective_date = ${targetDate}::date
+        ORDER BY b.bracket_order
+    `;
     decimal total = 0.0d;
     boolean foundAny = false;
     stream<record {}, sql:Error?> rs = dbClient->query(q);
@@ -261,7 +261,7 @@ returns decimal|error {
         return error("Failed reading brackets: " + e.message());
     }
     if (!foundAny) {
-        return error("No tax brackets found for " + calcType + " on " + targetDate);
+        return error("No aggregated brackets found for " + calcType + " on " + targetDate + ". Run aggregation first.");
     }
     return total;
 }

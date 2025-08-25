@@ -3,48 +3,19 @@ import { useState, useEffect } from "react";
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState({
-    totalDocuments: 47,
-    successfulExtractions: 42,
-    activeSchemas: 3,
-    pendingProcessing: 2
+    totalDocuments: 0,
+    successfulExtractions: 0,
+    activeSchemas: 0,
+    pendingProcessing: 0
   });
 
-  const [recentActivity] = useState([
-    {
-      id: 1,
-      type: 'document_uploaded',
-      message: 'Tax code document uploaded by Admin',
-      timestamp: '2025-08-14T10:30:00Z',
-      user: 'admin@example.com'
-    },
-    {
-      id: 2,
-      type: 'schema_generated',
-      message: 'Income tax schema v2.1 generated successfully',
-      timestamp: '2025-08-14T10:25:00Z',
-      user: 'system'
-    },
-    {
-      id: 3,
-      type: 'rules_extracted',
-      message: '15 new tax rules extracted from uploaded document',
-      timestamp: '2025-08-14T10:20:00Z',
-      user: 'system'
-    },
-    {
-      id: 4,
-      type: 'user_registered',
-      message: 'New user registered: john.doe@example.com',
-      timestamp: '2025-08-14T09:45:00Z',
-      user: 'system'
-    }
-  ]);
+  const [recentActivity] = useState([]);
 
   const [systemHealth] = useState([
-    { name: 'API Server', status: 'healthy', uptime: '99.9%' },
-    { name: 'Database', status: 'healthy', uptime: '99.8%' },
-    { name: 'Document Processor', status: 'warning', uptime: '98.5%' },
-    { name: 'Schema Generator', status: 'healthy', uptime: '99.7%' }
+  { name: 'API Server', status: 'healthy', uptime: '—' },
+  { name: 'Database', status: 'healthy', uptime: '—' },
+  { name: 'Document Processor', status: 'healthy', uptime: '—' },
+  { name: 'Schema Generator', status: 'healthy', uptime: '—' }
   ]);
 
   const formatTime = (timestamp) => {
@@ -80,21 +51,169 @@ export default function AdminDashboard() {
     return icons[type] || icons.document_uploaded;
   };
 
-  const generateSchema = async () => {
-    // This would call the actual API
+  const [schemaType, setSchemaType] = useState('income_tax');
+  const [targetDate, setTargetDate] = useState(() => new Date().toISOString().slice(0,10));
+  const [actionMsg, setActionMsg] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState('');
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [uploadCategory, setUploadCategory] = useState('income_tax');
+  const [docId, setDocId] = useState('');
+  const [preflight, setPreflight] = useState({ ok: true, evidenceCount: 0, aggregatedExists: false });
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetch('/api/admin/summary', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setStats({
+          totalDocuments: data.totalDocuments || 0,
+          successfulExtractions: data.successfulExtractions || 0,
+          activeSchemas: data.activeSchemas || 0,
+          pendingProcessing: data.pendingProcessing || 0
+        });
+      } catch {}
+    }
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Refresh preflight whenever schemaType or date changes
+  useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      try {
+        const res = await fetch(`/api/admin/preflight?schemaType=${encodeURIComponent(schemaType)}&date=${encodeURIComponent(targetDate)}`, { cache: 'no-store' });
+        if (!res.ok) {
+          if (!cancelled) setPreflight({ ok: false, evidenceCount: 0, aggregatedExists: false });
+          return;
+        }
+        const data = await res.json();
+        if (!cancelled) setPreflight({ ok: true, evidenceCount: data?.evidenceCount || 0, aggregatedExists: !!data?.aggregatedExists });
+      } catch {
+        if (!cancelled) setPreflight({ ok: false, evidenceCount: 0, aggregatedExists: false });
+      }
+    }
+    check();
+    return () => { cancelled = true; };
+  }, [schemaType, targetDate]);
+
+  const runAggregation = async () => {
+    setActionMsg('');
+    setLoading(true);
     try {
-      const response = await fetch('/api/v1/admin/generate-schema', {
+      const response = await fetch('/api/admin/aggregate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ schemaType: 'income_tax' })
+        body: JSON.stringify({ schemaType, date: targetDate })
       });
-      
+      const data = await response.json().catch(() => ({}));
       if (response.ok) {
-        // Update stats or show success message
-        console.log('Schema generation triggered');
+        setActionMsg(`Aggregated ${schemaType} for ${targetDate}`);
+      } else {
+        setActionMsg(data?.error || 'Aggregation failed');
       }
     } catch (error) {
-      console.error('Failed to generate schema:', error);
+      setActionMsg('Aggregation failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runGenerateSchema = async () => {
+    setActionMsg('');
+    setLoading(true);
+    try {
+  const response = await fetch('/api/admin/generate-schema', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schemaType, date: targetDate })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok) {
+        setActionMsg(`Generated schema for ${schemaType} on ${targetDate}`);
+      } else {
+        setActionMsg(data?.error || 'Schema generation failed');
+      }
+    } catch (e) {
+      setActionMsg('Schema generation failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runExtractMetadata = async () => {
+    if (!docId) { setActionMsg('Enter a document ID'); return; }
+    setActionMsg('');
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/extract-metadata', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ docId, schemaType })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) setActionMsg('Extraction batch created'); else setActionMsg(data?.error || 'Extraction failed');
+    } catch (e) {
+      setActionMsg('Extraction failed');
+    } finally { setLoading(false); }
+  };
+
+  const runApplyMetadata = async () => {
+    if (!docId) { setActionMsg('Enter a document ID'); return; }
+    setActionMsg(''); setLoading(true);
+    try {
+      const res = await fetch('/api/admin/apply-metadata', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ docId, schemaType })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) setActionMsg('Metadata applied to evidence rules'); else setActionMsg(data?.error || 'Apply failed');
+    } catch (e) { setActionMsg('Apply failed'); }
+    finally { setLoading(false); }
+  };
+
+  const onFileChange = (e) => {
+    setUploadMsg('');
+    const f = e.target.files?.[0];
+    setSelectedFile(f || null);
+  };
+
+  const uploadDocument = async () => {
+    if (!selectedFile) {
+      setUploadMsg('Select a file first');
+      return;
+    }
+    setUploading(true);
+    setUploadMsg('');
+    try {
+      const form = new FormData();
+      form.append('file', selectedFile);
+      form.append('filename', selectedFile.name);
+  form.append('schemaType', uploadCategory);
+      const res = await fetch('/api/admin/upload', { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setUploadMsg(data?.error || 'Upload failed');
+      } else {
+        setUploadMsg('Upload and processing started');
+        // refresh stats
+        try {
+          const sres = await fetch('/api/admin/summary', { cache: 'no-store' });
+          const sdata = await sres.json();
+          setStats(prev => ({
+            ...prev,
+            totalDocuments: sdata.totalDocuments || prev.totalDocuments,
+            pendingProcessing: sdata.pendingProcessing || prev.pendingProcessing,
+          }));
+        } catch {}
+      }
+    } catch (e) {
+      setUploadMsg('Upload failed');
+    } finally {
+      setUploading(false);
+      setSelectedFile(null);
     }
   };
 
@@ -194,17 +313,83 @@ export default function AdminDashboard() {
           <div className="card">
             <h3 className="text-lg font-medium text-gray-900 mb-4">Quick Actions</h3>
             <div className="space-y-3">
-              <button 
-                onClick={generateSchema}
-                className="btn btn-primary w-full text-left"
-              >
-                <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  Regenerate Schema
+              {/* Admin Upload */}
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">Upload Document (Admin only)</label>
+                <input type="file" accept=".pdf,.doc,.docx" onChange={onFileChange} className="form-field" />
+                <select className="form-field" value={uploadCategory} onChange={e => setUploadCategory(e.target.value)}>
+                  <option value="income_tax">Income Tax</option>
+                  <option value="paye">PAYE</option>
+                  <option value="vat">VAT</option>
+                </select>
+                <button onClick={uploadDocument} disabled={uploading || !selectedFile} className="btn btn-secondary w-full text-left">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                    {uploading ? 'Uploading…' : 'Upload + Process'}
+                  </div>
+                </button>
+                {uploadMsg && <div className="text-xs text-gray-600">{uploadMsg}</div>}
+              </div>
+
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <select className="form-field" value={schemaType} onChange={e => setSchemaType(e.target.value)}>
+                    <option value="income_tax">Income Tax</option>
+                    <option value="paye">PAYE</option>
+                    <option value="vat">VAT</option>
+                  </select>
+                  <input type="date" className="form-field" value={targetDate} onChange={e => setTargetDate(e.target.value)} />
                 </div>
-              </button>
+                <div className="grid grid-cols-2 gap-2">
+                  <button 
+                    onClick={runAggregation}
+                    disabled={loading || preflight.evidenceCount === 0}
+                    className={`btn btn-primary w-full text-left ${preflight.evidenceCount === 0 ? 'opacity-60 cursor-not-allowed' : ''}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      {loading ? 'Aggregating…' : 'Aggregate'}
+                    </div>
+                  </button>
+                  <button 
+                    onClick={runGenerateSchema}
+                    disabled={loading}
+                    className={`btn btn-secondary w-full text-left`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      {loading ? 'Working…' : 'Generate Schema'}
+                    </div>
+                  </button>
+                </div>
+                {actionMsg && (<div className="text-xs text-gray-600">{actionMsg}</div>)}
+                {preflight.ok && preflight.evidenceCount === 0 && (
+                  <div className="text-xs text-orange-700 bg-orange-50 border border-orange-200 rounded p-2 mt-2">
+                    No evidence rules found for <b>{schemaType}</b> on <b>{targetDate}</b>. Upload a relevant document first, then aggregate.
+                  </div>
+                )}
+              </div>
+
+              {/* Offline LLM steps */}
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">Document ID (for metadata workflow)</label>
+                <input className="form-field" placeholder="e.g. 42" value={docId} onChange={e => setDocId(e.target.value)} />
+                <div className="grid grid-cols-2 gap-2">
+                  <button className="btn btn-secondary text-left" disabled={loading || !docId} onClick={runExtractMetadata}>
+                    Run Extract
+                  </button>
+                  <button className="btn btn-secondary text-left" disabled={loading || !docId} onClick={runApplyMetadata}>
+                    Apply Approved
+                  </button>
+                </div>
+                <a className="text-xs text-blue-700 underline" href="/admin/proposals" rel="nofollow">Open Proposals Inbox</a>
+              </div>
               
               <button className="btn btn-secondary w-full text-left">
                 <div className="flex items-center gap-2">

@@ -1,95 +1,76 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export default function SchemasPage() {
   const [selectedSchema, setSelectedSchema] = useState("income_tax");
   const [activeTab, setActiveTab] = useState("overview");
+  const [schemas, setSchemas] = useState([]);
+  const [fields, setFields] = useState([]);
+  const [versionInfo, setVersionInfo] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  // Mock data - in real app this would come from API
-  const schemas = [
-    {
-      id: "income_tax",
-      name: "Income Tax",
-      activeVersion: "v2.1",
-      lastUpdated: "2025-08-12T14:30:00Z",
-      status: "stable",
-      confidenceScore: 0.95,
-      fieldCount: 23
-    },
-    {
-      id: "paye",
-      name: "PAYE",
-      activeVersion: "v1.0",
-      lastUpdated: "2025-08-10T09:15:00Z",
-      status: "beta",
-      confidenceScore: 0.87,
-      fieldCount: 15
-    },
-    {
-      id: "vat",
-      name: "VAT",
-      activeVersion: "v1.5",
-      lastUpdated: "2025-08-08T16:45:00Z",
-      status: "stable",
-      confidenceScore: 0.92,
-      fieldCount: 18
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true); setError("");
+      try {
+  const base = '';
+        const types = [
+          { id: 'income_tax', name: 'Income Tax' },
+          { id: 'paye', name: 'PAYE' },
+          { id: 'vat', name: 'VAT' },
+        ];
+        const results = await Promise.all(types.map(async t => {
+          const res = await fetch(`${base}/api/forms/schema?schemaType=${t.id}`, { cache: 'no-store' });
+          if (!res.ok) return { id: t.id, name: t.name, activeVersion: '—', status: 'draft', fieldCount: 0, lastUpdated: null };
+          const data = await res.json().catch(() => null);
+          const schema = data?.schema?.schema_data || data?.schema?.schema || data?.schema_data || data?.schema;
+          const props = schema?.jsonSchema?.properties || {};
+          const fieldCount = Object.keys(props).length;
+          const lastUpdated = schema?.metadata?.generatedAt || null;
+          const version = data?.schema?.version ?? data?.version ?? null;
+          return { id: t.id, name: t.name, activeVersion: version ? `v${version}` : 'active', status: 'stable', fieldCount, lastUpdated };
+        }));
+        if (!cancelled) setSchemas(results);
+      } catch (e) {
+        if (!cancelled) setError('Failed to load schemas');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-  ];
+    load();
+    return () => { cancelled = true; };
+  }, []);
 
-  const versionHistory = [
-    {
-      version: "v2.1",
-      date: "2025-08-12T14:30:00Z",
-      author: "system",
-      description: "Added new deduction fields based on 2025 tax regulations",
-      isActive: true,
-      confidenceScore: 0.95
-    },
-    {
-      version: "v2.0",
-      date: "2025-08-10T11:20:00Z",
-      author: "admin@example.com",
-      description: "Major update with conditional logic for foreign income",
-      isActive: false,
-      confidenceScore: 0.91
-    },
-    {
-      version: "v1.9",
-      date: "2025-08-08T09:45:00Z",
-      author: "system",
-      description: "Fixed validation rules for tax brackets",
-      isActive: false,
-      confidenceScore: 0.89
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDetails() {
+      setFields([]); setVersionInfo([]);
+      try {
+  const base = '';
+  const res = await fetch(`${base}/api/forms/schema?schemaType=${selectedSchema}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json().catch(() => null);
+        const schema = data?.schema?.schema_data || data?.schema?.schema || data?.schema_data || data?.schema;
+        const props = schema?.jsonSchema?.properties || {};
+        const req = schema?.jsonSchema?.required || [];
+        const fieldsArr = Object.entries(props).map(([name, meta]) => ({
+          name,
+          type: meta?.type || 'string',
+          required: req.includes(name),
+          validation: meta?.minimum !== undefined ? `minimum: ${meta.minimum}` : (meta?.pattern ? `pattern: ${meta.pattern}` : ''),
+          sourceRule: (schema?.metadata?.sourceRuleIds || []).join(', '),
+          confidence: 1
+        }));
+        if (!cancelled) setFields(fieldsArr);
+        const ver = data?.schema?.version ?? data?.version ?? null;
+        if (!cancelled) setVersionInfo([{ version: ver ? `v${ver}` : 'active', date: schema?.metadata?.generatedAt || '', author: 'system', description: 'Auto-generated from aggregated rules', isActive: true, confidenceScore: 1 }]);
+      } catch {}
     }
-  ];
-
-  const mockFields = [
-    {
-      name: "personal_income",
-      type: "number",
-      required: true,
-      validation: "minimum: 0",
-      sourceRule: "Personal Income Assessment Rule 2.1",
-      confidence: 0.98
-    },
-    {
-      name: "tax_year",
-      type: "string",
-      required: true,
-      validation: "enum: ['2024', '2025']",
-      sourceRule: "Tax Year Selection Rule 1.0",
-      confidence: 0.95
-    },
-    {
-      name: "foreign_income",
-      type: "number",
-      required: false,
-      validation: "minimum: 0",
-      sourceRule: "Foreign Income Declaration Rule 3.2",
-      confidence: 0.87,
-      conditional: "personal_income > 50000"
-    }
-  ];
+    loadDetails();
+    return () => { cancelled = true; };
+  }, [selectedSchema]);
 
   const selectedSchemaData = schemas.find(s => s.id === selectedSchema);
 
@@ -258,7 +239,7 @@ export default function SchemasPage() {
                     </div>
                     <div className="p-4 bg-purple-50 rounded-lg">
                       <div className="text-2xl font-bold text-purple-600">
-                        {versionHistory.length}
+                        {versionInfo.length}
                       </div>
                       <div className="text-purple-700 text-sm">Total Versions</div>
                     </div>
@@ -278,11 +259,11 @@ export default function SchemasPage() {
                         </div>
                         <div>
                           <span className="text-gray-600">Required Fields:</span>
-                          <span className="ml-2 font-medium">12</span>
+                          <span className="ml-2 font-medium">{(fields.filter(f => f.required)).length}</span>
                         </div>
                         <div>
                           <span className="text-gray-600">Optional Fields:</span>
-                          <span className="ml-2 font-medium">11</span>
+                          <span className="ml-2 font-medium">{(fields.filter(f => !f.required)).length}</span>
                         </div>
                       </div>
                     </div>
@@ -305,7 +286,7 @@ export default function SchemasPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-200">
-                        {mockFields.map((field) => (
+                        {fields.map((field) => (
                           <tr key={field.name} className="hover:bg-gray-50">
                             <td className="py-3 text-sm">
                               <div className="font-medium text-gray-900">{field.name}</div>
@@ -338,7 +319,7 @@ export default function SchemasPage() {
 
               {activeTab === "history" && (
                 <div className="space-y-4">
-                  {versionHistory.map((version) => (
+                  {versionInfo.map((version) => (
                     <div key={version.version} className={`p-4 rounded-lg border ${
                       version.isActive ? 'border-green-200 bg-green-50' : 'border-gray-200'
                     }`}>

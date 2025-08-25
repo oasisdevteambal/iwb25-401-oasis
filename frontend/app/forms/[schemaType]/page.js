@@ -39,13 +39,7 @@ export default async function Page({ params }) {
                   {schemaType.replaceAll("_", " ")} Tax Return
                 </h1>
                 
-                {/* Progress Indicator - Mock 35% completion */}
-                <div className="mt-3 flex items-center gap-4">
-                  <div className="flex-1 bg-gray-200 rounded-full h-2 max-w-xs">
-                    <div className="bg-blue-500 h-2 rounded-full transition-all duration-300" style={{ width: '35%' }}></div>
-                  </div>
-                  <span className="text-sm text-gray-600">35% complete</span>
-                </div>
+                {/* Progress indicator removed (no dummy data) */}
               </div>
               
               <div className="flex items-center gap-3">

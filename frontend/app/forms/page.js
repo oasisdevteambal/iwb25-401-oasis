@@ -1,31 +1,38 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
 export default function FormsIndex() {
-  const forms = [
-    { 
-      href: "/forms/income_tax", 
-      title: "Income Tax", 
-      description: "Personal income tax calculations and deductions",
-      version: "v2.1",
-      lastUpdated: "2025-08-12",
-      status: "active"
-    },
-    // Future forms will be added here
-    // { 
-    //   href: "/forms/paye", 
-    //   title: "PAYE", 
-    //   description: "Pay As You Earn tax calculations",
-    //   version: "v1.0",
-    //   lastUpdated: "2025-08-10",
-    //   status: "beta"
-    // },
-    // { 
-    //   href: "/forms/vat", 
-    //   title: "VAT", 
-    //   description: "Value Added Tax calculations and returns",
-    //   version: "v1.5",
-    //   lastUpdated: "2025-08-08",
-    //   status: "active"
-    // }
-  ];
+  const [forms, setForms] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    const controller = new AbortController();
+
+    const load = async () => {
+      try {
+        // Client-side fetch so you can see it in the browser Network tab
+        const res = await fetch("/api/forms/list", { cache: "no-store", signal: controller.signal });
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted) setForms(data?.forms || []);
+        } else if (isMounted) {
+          setForms([]);
+        }
+      } catch (_) {
+        if (isMounted) setForms([]);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    load();
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
+  }, []);
 
   return (
     <div className="bg-gray-50 min-h-screen py-8">
@@ -105,7 +112,7 @@ export default function FormsIndex() {
                     {form.status}
                   </span>
                   <span className="text-xs text-gray-500">
-                    Updated {form.lastUpdated}
+                    {form.lastUpdated ? `Updated ${new Date(form.lastUpdated).toISOString().slice(0,10)}` : 'Active'}
                   </span>
                 </div>
                 
@@ -117,6 +124,18 @@ export default function FormsIndex() {
                 </a>
               </div>
             ))}
+          </div>
+        ) : loading ? (
+          // Loading State
+          <div className="text-center py-16">
+            <div className="mx-auto w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-6">
+              <svg className="w-12 h-12 text-gray-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+              </svg>
+            </div>
+            <h3 className="text-xl font-medium text-gray-900 mb-2">Loading forms…</h3>
+            <p className="text-gray-600 mb-6">Fetching available tax forms.</p>
           </div>
         ) : (
           /* Empty State */
