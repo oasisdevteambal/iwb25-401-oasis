@@ -415,20 +415,66 @@ function inferCalcTypeFromText(string q) returns string {
 
 // --- Handlers ---
 function handleFormulas(string calcType, string? dateOpt) returns json|error {
-    // Prefer active form schema for formulas; fallback to aggregated rule_data.formulas
     string t = calcType;
-    if (!isSupportedTypeOrEmpty(t)) {
-        return error("Unsupported or missing schemaType. Provide one of income_tax, paye, vat.");
+
+    // If specific tax type is provided, search only that type
+    if (t.length() > 0 && isSupportedTypeOrEmpty(t)) {
+        return fetchFormulasForType(t, dateOpt);
     }
-    json|error schemaJ = fetchActiveFormSchemaMaybe(t);
+
+    // If no specific type can be inferred, search ALL tax types and let LLM find relevant formulas
+    log:printInfo("[formulas] No specific tax type inferred, searching all types");
+
+    map<json> allFormulas = {};
+    string[] taxTypes = ["income_tax", "paye", "vat"];
+
+    foreach string taxType in taxTypes {
+        json|error typeFormulas = fetchFormulasForType(taxType, dateOpt);
+        if (typeFormulas is json && typeFormulas is map<json>) {
+            map<json> tf = <map<json>>typeFormulas;
+            json? formulas = tf["formulas"];
+            if (formulas is json[] && formulas.length() > 0) {
+                allFormulas[taxType] = {
+                    "formulas": formulas,
+                    "formula_details": tf["formula_details"] ?: "",
+                    "source": tf["source"] ?: "",
+                    "tax_type": taxType
+                };
+            }
+        }
+    }
+
+    if (allFormulas.length() == 0) {
+        return error("No formulas found in our current knowledge base for any tax type.");
+    }
+
+    map<json> result = {
+        "answer": "Here are all available formulas from our tax database across different tax types",
+        "source": "all_tax_types",
+        "all_formulas": allFormulas,
+        "search_instruction": "Use LLM to search through all formulas to find relevant ones based on the user's question"
+    };
+
+    return <json>result;
+}
+
+// Helper function to fetch formulas for a specific tax type
+function fetchFormulasForType(string taxType, string? dateOpt) returns json|error {
+    log:printInfo("[formulas] Fetching formulas for tax type: '" + taxType + "'");
+
+    if (!isSupportedTypeOrEmpty(taxType)) {
+        return error("Unsupported tax type: " + taxType);
+    }
+
+    // First, try the active form schema
+    json|error schemaJ = fetchActiveFormSchemaMaybe(taxType);
     if (schemaJ is json) {
-        map<json> out = {"answer": "Here are the detailed formulas for " + calcType + " calculations from our active form schema.", "source": "form_schemas.active"};
+        map<json> out = {"answer": "Here are the detailed formulas for " + taxType + " calculations from our active form schema.", "source": "form_schemas.active"};
         if (schemaJ is map<json>) {
             map<json> sm = <map<json>>schemaJ;
             json? rules = sm["calculationRules"];
             if (rules is json[]) {
                 out["formulas"] = rules;
-                // Include formula details in the answer for LLM processing
                 out["formula_details"] = buildFormulaDetailsText(<json[]>rules);
                 return <json>out;
             }
@@ -443,22 +489,24 @@ function handleFormulas(string calcType, string? dateOpt) returns json|error {
             }
         }
     }
-    // Try aggregated rule
-    json|error agg = fetchAggregatedRule(t, dateOpt);
+
+    // Then, try aggregated rule
+    json|error agg = fetchAggregatedRule(taxType, dateOpt);
     if (agg is json) {
         map<json> am = <map<json>>agg;
         json? rd = am["rule_data"];
         if (rd is map<json>) {
             json? f = (<map<json>>rd)["formulas"];
             if (f is json[]) {
-                map<json> out = {"answer": "Here are the detailed formulas for " + calcType + " calculations from our aggregated tax rules.", "source": "tax_rules.aggregated"};
+                map<json> out = {"answer": "Here are the detailed formulas for " + taxType + " calculations from our aggregated tax rules.", "source": "tax_rules.aggregated"};
                 out["formulas"] = f;
                 out["formula_details"] = buildFormulaDetailsText(<json[]>f);
                 return <json>out;
             }
         }
     }
-    return error("No formulas found in our current knowledge base.");
+
+    return error("No formulas found for " + taxType + " in our current knowledge base.");
 }
 
 function handleRatesAndBrackets(string calcType, string? dateOpt) returns json|error {
@@ -847,7 +895,7 @@ function runChatAnswerLLM(string intent, string question, string calcType, strin
         contextSection += "IMPORTANT: Use this conversation context to answer the current question. You can and should reference information from previous messages in this conversation, including the user's name if they mentioned it earlier. For references like 'the formula', 'pct', 'it', 'that', 'my name', etc., look for the relevant information in the conversation history above.\n";
     }
 
-    string instr = "User asked: \"" + question + "\"\nIntent: " + intent + (calcType.length() > 0 ? ("\nTax Type: " + calcType) : "") + contextSection + "\n\nIMPORTANT: If the conversation context above contains the user's name or any personal references, you MUST use that information when answering. Do not claim you don't have access to information that is clearly provided in the conversation context.\n\nAvailable Facts:\n" + factsJson + "\n\nProvide a helpful, engaging response using ONLY these facts and the conversation context. Make it conversational and educational with proper formatting.\n\nFor calculation questions (like 'how much tax do I pay with income X'):\n• Extract the income amount from the user's question\n• Use the provided formulas to walk through the calculation step-by-step\n• Apply the tax brackets if available to determine the tax rate\n• Show the actual calculation with numbers\n• Explain each step clearly\n• If personal_relief or other constants are missing, explain what information is needed\n• Make reasonable assumptions only if explicitly stated in the facts\n\nFor contextual questions about terms or variables (like 'what does pct mean'):\n• Use the conversation context to understand what the user is referring to\n• Explain the term based on common mathematical/tax notation\n• Reference the specific context where it appeared\n• For 'pct', explain it typically means 'percentage' and converts rates to decimal form\n\nFor formula questions, explain each formula clearly with:\n• What it calculates\n• The mathematical expression  \n• What each variable means\n• A simple example if possible\n\nExample formula formatting:\n## 🧮 PAYE Calculation Formulas\n\n### 1. **Taxable Income** 📊\n```\nTaxable Income = 12 * monthly_regular_profits_from_employment - personal_relief\n```\nThis calculates your annual taxable income by:\n• Taking your monthly salary and multiplying by 12\n• Subtracting your personal relief allowance\n\nIf facts are insufficient for a good answer, use the exact fallback phrase above.";
+    string instr = "User asked: \"" + question + "\"\nIntent: " + intent + (calcType.length() > 0 ? ("\nTax Type: " + calcType) : "") + contextSection + "\n\nIMPORTANT: If the conversation context above contains the user's name or any personal references, you MUST use that information when answering. Do not claim you don't have access to information that is clearly provided in the conversation context.\n\nAvailable Facts:\n" + factsJson + "\n\nProvide a helpful, engaging response using ONLY these facts and the conversation context. Make it conversational and educational with proper formatting.\n\nFor calculation questions (like 'how much tax do I pay with income X'):\n• Extract the income amount from the user's question\n• Use the provided formulas to walk through the calculation step-by-step\n• Apply the tax brackets if available to determine the tax rate\n• Show the actual calculation with numbers\n• Explain each step clearly\n• If personal_relief or other constants are missing, explain what information is needed\n• Make reasonable assumptions only if explicitly stated in the facts\n\nFor contextual questions about terms or variables (like 'what does pct mean'):\n• Use the conversation context to understand what the user is referring to\n• Explain the term based on common mathematical/tax notation\n• Reference the specific context where it appeared\n• For 'pct', explain it typically means 'percentage' and converts rates to decimal form\n\nFor formula questions:\n• If the facts contain 'all_formulas' with multiple tax types, search through ALL formulas to find ones relevant to the user's question\n• Look for formulas that contain the terms mentioned in the user's question (e.g., 'personal relief', 'taxable income')\n• Clearly identify which tax type each relevant formula belongs to\n• Explain each relevant formula clearly with:\n  - Which tax type it applies to (PAYE, Income Tax, VAT)\n  - What it calculates\n  - The mathematical expression\n  - What each variable means\n  - A simple example if possible\n\nExample multi-type formula response:\n## 🧮 Formulas containing \"personal relief\"\n\n### **PAYE Tax** 📊\n```\nTaxable Income = 12 * monthly_regular_profits_from_employment - personal_relief\n```\nThis calculates your annual taxable income for PAYE by:\n• Taking your monthly salary and multiplying by 12\n• Subtracting your personal relief allowance\n\n### **Income Tax** 📊\n```\nTotal Tax = (taxable_income * tax_rate) - personal_relief\n```\nThis calculates income tax with personal relief deduction.\n\nIf facts are insufficient for a good answer, use the exact fallback phrase above.";
 
     json body = {
         "contents": [
