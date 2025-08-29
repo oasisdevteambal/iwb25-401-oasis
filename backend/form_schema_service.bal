@@ -205,7 +205,7 @@ function buildJsonSchema(string calcType, record {RuleRow[] rules; map<BracketRo
             }
         }
 
-        // field_metadata -> properties
+        // field_metadata -> properties (only include non-calculated fields in UI)
         json? fm = rd["field_metadata"];
         if (fm is map<json>) {
             foreach var entry in fm.entries() {
@@ -215,6 +215,12 @@ function buildJsonSchema(string calcType, record {RuleRow[] rules; map<BracketRo
                     continue;
                 }
                 map<json> meta = <map<json>>metaJ;
+
+                // Skip calculated fields - they should not appear in the UI form
+                json? isCalculated = meta["is_calculated"];
+                if (isCalculated is boolean && isCalculated == true) {
+                    continue; // Don't include calculated fields in form properties
+                }
 
                 map<json> prop = {};
                 json? t = meta["type"];
@@ -280,12 +286,17 @@ function buildJsonSchema(string calcType, record {RuleRow[] rules; map<BracketRo
             foreach json f in fml {
                 if (f is map<json>) {
                     map<json> fmMap = <map<json>>f;
-                    // Normalize keys id,name,expression,order
+                    // Normalize keys id,name,expression,order,output_field
                     json idJ = fmMap["id"] ?: (fmMap["name"] ?: "");
                     json nmJ = fmMap["name"] ?: (fmMap["id"] ?: "");
                     json exJ = fmMap["expression"] ?: "";
                     json ordJ = fmMap["order"] ?: 0;
-                    formulasAgg[formulasAgg.length()] = {"id": idJ, "name": nmJ, "expression": exJ, "order": ordJ};
+                    json outfJ = fmMap["output_field"] ?: "";
+                    map<json> formula = {"id": idJ, "name": nmJ, "expression": exJ, "order": ordJ};
+                    if (outfJ is string && (<string>outfJ).trim().length() > 0) {
+                        formula["output_field"] = outfJ;
+                    }
+                    formulasAgg[formulasAgg.length()] = formula;
                 }
             }
         }

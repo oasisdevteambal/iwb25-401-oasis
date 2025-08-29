@@ -427,26 +427,53 @@ function runLlmIntelligentAggregation(string calcType, string targetDate, record
     log:printInfo("Starting LLM intelligent aggregation for " + allRules.length().toString() + " rules with " + detectedConflicts.length().toString() + " detected conflicts");
 
     // Build comprehensive prompt for LLM aggregation
-    string systemPrompt = "You are a Sri Lankan tax law aggregation specialist. You must consolidate multiple evidence rules from government documents into a single coherent rule. CRITICAL: Use ONLY information explicitly present in the provided rules. Do not add, interpolate, or invent any data not found in the source documents.";
+    string systemPrompt = "You are a Sri Lankan tax calculation expert who creates UNIFIED executable tax systems from multiple government documents. Your goal is to merge different documents into ONE coherent calculation flow that produces a working tax calculator.\n\n" +
+        "DOCUMENT ROLES:\n" +
+        "- TAX TABLES: Provide official bracket structures and rates (authoritative for rates)\n" +
+        "- POLICY DOCUMENTS: Provide calculation formulas and methodology (authoritative for logic)\n" +
+        "- Your task: Combine RATES from tax tables with CALCULATION LOGIC from policy documents into one unified system";
 
-    string constraints = "CONSTRAINTS:\n" +
-        "- Data Integrity: Use ONLY data from the provided government documents\n" +
-        "- No Interpolation: Do not fill gaps with assumed or calculated values\n" +
-        "- Conflict Resolution: When rules conflict, prefer newer effective dates, higher source authority ranks\n" +
-        "- Variable Consistency: Merge field_metadata and required_variables from all sources\n" +
-        "- Formula Integration: Combine formulas while maintaining mathematical validity\n" +
-        "- Bracket Consolidation: For progressive taxes, merge bracket schedules intelligently\n" +
-        "- Source Tracking: Maintain source_refs for all merged elements\n" +
-        "- CRITICAL: In ALL source_refs, use COMPLETE RULE IDs (ending with _evidence), NOT document IDs\n" +
-        "- CRITICAL: Rule IDs are provided in the rules section - use them exactly as shown";
+    string constraints = "CRITICAL RULES:\n" +
+        "1. INPUT vs CALCULATED FIELD CLASSIFICATION:\n" +
+        "   - USER INPUTS: Only values the user must provide (salary, personal_relief, etc.)\n" +
+        "   - CALCULATED VALUES: Results derived from formulas (annual_gross, taxable_income, tax_amount)\n" +
+        "   - NEVER include calculated values in required_variables - only true user inputs\n" +
+        "   - Example: If annual_gross = monthly_salary × 12, then only monthly_salary is a user input\n\n" +
+        "2. FORMULA DEPENDENCY CHAIN:\n" +
+        "   - Create proper calculation sequence: user_inputs → intermediate_calculations → final_result\n" +
+        "   - Chain formulas logically: A = f(user_inputs), B = f(A), C = f(B)\n" +
+        "   - Each formula should only reference previously calculated values or user inputs\n\n" +
+        "3. PROGRESSIVE TAX BRACKET INTEGRATION:\n" +
+        "   - PRESERVE original bracket structures in 'brackets' field for form generation\n" +
+        "   - ALSO convert brackets to executable if-then logic in 'progressive_tax_logic'\n" +
+        "   - Template: if (income <= bracket1_max) then (income × rate1) - fixed1\n" +
+        "   - Output BOTH: bracket data structure AND progressive formula\n" +
+        "   - Example: brackets: [{min_income: 0, max_income: 233333, rate_percent: 6, fixed_amount: 9000}]\n" +
+        "   - AND progressive_tax_logic: \"if (taxable_income <= 233333) then (taxable_income * 0.06) - 9000\"\n\n" +
+        "4. DATA INTEGRITY:\n" +
+        "   - Use ONLY data from provided documents\n" +
+        "   - Tax table brackets override policy document rates\n" +
+        "   - Policy document formulas override tax table calculation methods\n" +
+        "   - CRITICAL: Use COMPLETE RULE IDs (ending with _evidence) in source_refs";
 
-    string domainGuidance = "";
+    string domainGuidance = "SRI LANKAN TAX CALCULATION CONTEXT:\n";
     if (calcType == "income_tax") {
-        domainGuidance = "Focus on: taxable_income calculation, progressive tax brackets, annual tax computation";
+        domainGuidance += "- Progressive brackets with fixed deductions (income × rate) - fixed_amount\n" +
+            "- Personal relief subtracted BEFORE applying brackets\n" +
+            "- Calculation flow: annual_income → taxable_income → bracket_lookup → tax_amount\n" +
+            "- USER INPUTS: annual_income, personal_relief\n" +
+            "- CALCULATED: taxable_income = annual_income - personal_relief, tax_amount = progressive_calculation(taxable_income)";
     } else if (calcType == "paye") {
-        domainGuidance = "Focus on: monthly taxable income, PAYE brackets, monthly tax computation";
+        domainGuidance += "- Monthly salary calculation with progressive brackets\n" +
+            "- Standard flow: monthly_salary × 12 = annual_gross, annual_gross - personal_relief = taxable_income\n" +
+            "- Apply progressive brackets to taxable_income for final tax\n" +
+            "- USER INPUTS: monthly_regular_profits_from_employment, personal_relief\n" +
+            "- CALCULATED: annual_gross, taxable_income, tax_amount\n" +
+            "- DO NOT ask user for tax_rate - this comes from bracket lookup";
     } else if (calcType == "vat") {
-        domainGuidance = "Focus on: taxable supplies, output tax, input tax credit, net VAT payable";
+        domainGuidance += "- Focus on: taxable_supplies, output_tax, input_tax_credit, net_VAT_payable\n" +
+            "- USER INPUTS: taxable_supplies, input_tax_credit\n" +
+            "- CALCULATED: output_tax, net_VAT_payable";
     }
 
     // Build rules summary for LLM
@@ -455,18 +482,50 @@ function runLlmIntelligentAggregation(string calcType, string targetDate, record
     // Phase 3: Add detected conflicts to LLM prompt
     string conflictDetails = buildConflictDetailsForLlm(detectedConflicts);
 
-    string conflictAnalysis = "CONFLICT RESOLUTION PRIORITY:\n" +
-        "1. Effective Date: Newer dates override older dates\n" +
-        "2. Source Authority: Higher source_rank values have precedence\n" +
-        "3. Completeness: Rules with more complete metadata preferred\n" +
-        "4. Government documents only - no external assumptions";
+    string conflictAnalysis = "INTEGRATION AND CONFLICT RESOLUTION:\n" +
+        "1. DOCUMENT INTEGRATION PRIORITY:\n" +
+        "   - Tax Table Brackets: Use for official rates and income thresholds (authoritative)\n" +
+        "   - Policy Documents: Use for calculation methodology and formula logic (authoritative)\n" +
+        "   - Create ONE unified system combining both sources\n\n" +
+        "2. FORMULA CHAIN CONSTRUCTION:\n" +
+        "   - Start with user inputs (what only user can provide)\n" +
+        "   - Build calculation chain step by step\n" +
+        "   - End with final tax amount calculation\n" +
+        "   - Example chain: monthly_salary → annual_gross → taxable_income → tax_amount\n\n" +
+        "3. PROGRESSIVE TAX IMPLEMENTATION:\n" +
+        "   - PRESERVE original bracket tables as 'brackets' array for form generation\n" +
+        "   - CONVERT bracket tables to executable formulas in 'progressive_tax_logic'\n" +
+        "   - Use if-then-else structure for progressive_tax_logic field\n" +
+        "   - Keep brackets separate AND integrated - both are needed\n" +
+        "   - Form generation needs brackets structure, calculation engine needs formulas\n\n" +
+        "4. CONFLICT RESOLUTION RULES:\n" +
+        "   - Effective Date: Newer dates override older\n" +
+        "   - Source Authority: Higher source_rank preferred\n" +
+        "   - Completeness: More complete metadata wins\n" +
+        "   - Tax rates: Official tax tables take precedence\n" +
+        "   - Calculation methods: Policy documents take precedence";
 
     string outputSchema = buildAggregationOutputSchema();
+
+    string validationInstructions = "\n\nFINAL VALIDATION REQUIREMENTS:\n" +
+        "Before submitting your response, verify:\n" +
+        "1. DEPENDENCY CHECK: Can you calculate the final tax amount using ONLY the fields in required_variables?\n" +
+        "2. CHAIN LOGIC: Are formulas ordered so each step only uses previous results or user inputs?\n" +
+        "3. INPUT CLASSIFICATION: Are ALL fields in required_variables things only a user can provide?\n" +
+        "4. PROGRESSIVE INTEGRATION: If tax brackets exist, are they converted to a single executable formula?\n" +
+        "5. SOURCE INTEGRITY: Do all source_refs use complete rule IDs with _evidence suffix?\n" +
+        "6. BRACKET PRESERVATION: Is the 'brackets' array included with complete bracket structure?\n\n" +
+        "EXAMPLE FLOW VALIDATION for PAYE:\n" +
+        "✓ User provides: monthly_regular_profits_from_employment, personal_relief\n" +
+        "✓ Calculate: annual_gross = monthly_regular_profits_from_employment × 12\n" +
+        "✓ Calculate: taxable_income = annual_gross - personal_relief\n" +
+        "✓ Calculate: tax_amount = progressive_bracket_calculation(taxable_income)\n" +
+        "✗ Do NOT ask user for: annual_gross, taxable_income, tax_rate, tax_amount";
 
     string fullPrompt = systemPrompt + "\n\n" + constraints + "\n\n" + domainGuidance + "\n\n" +
                         conflictAnalysis + "\n\nDETECTED CONFLICTS:\n" + conflictDetails +
                         "\n\nRULES TO AGGREGATE:\n" + rulesSummary +
-                        "\n\nOUTPUT SCHEMA:\n" + outputSchema +
+                        "\n\nOUTPUT SCHEMA:\n" + outputSchema + validationInstructions +
                         "\n\nReturn the consolidated rule in the specified JSON format.";
 
     // Call Gemini LLM for intelligent aggregation
@@ -487,50 +546,121 @@ function runLlmIntelligentAggregation(string calcType, string targetDate, record
 
 // Build a comprehensive summary of all rules for LLM processing
 function buildRulesSummaryForLlm(record {string id; string title; string description; json rule_data; string created_at; string source_authority; int source_rank; string effective_date; string expiry_date;}[] rules, string calcType) returns string {
-    string summary = "IMPORTANT: When referencing sources, use the RULE ID (the full ID with _evidence suffix), NOT the document ID.\n\n";
+    string summary = "DOCUMENT ANALYSIS GUIDE:\n" +
+        "Analyze each document by its TYPE and ROLE in tax calculation:\n\n" +
+        "DOCUMENT TYPES:\n" +
+        "- TAX TABLES (e.g., APIT_2526): Official bracket structures, rates, thresholds\n" +
+        "- POLICY DOCUMENTS (e.g., PAYE policy): Calculation formulas, methodology, variable definitions\n\n" +
+        "INTEGRATION STRATEGY:\n" +
+        "- Extract RATES and BRACKETS from tax tables (preserve bracket structure)\n" +
+        "- Extract FORMULAS and LOGIC from policy documents\n" +
+        "- Combine into ONE unified calculation system\n" +
+        "- Output BOTH: original brackets array AND progressive formulas\n" +
+        "- Brackets needed for form generation, formulas needed for calculation\n\n";
 
-    summary += "VALID RULE IDs TO REFERENCE:\n";
+    summary += "RULE ID REFERENCE LIST (use these exact IDs in source_refs):\n";
     foreach var rule in rules {
         summary += "- " + rule.id + "\n";
     }
-    summary += "\nDO NOT use document IDs like 'doc_temp_paye_doc_1756446524' - use RULE IDs like 'doc_temp_paye_doc_1756446524_paye_evidence'\n\n";
+    summary += "\nCRITICAL: Use RULE IDs with _evidence suffix, NOT document IDs!\n\n";
 
+    summary += "DOCUMENT ANALYSIS:\n";
     int ruleIndex = 1;
 
     foreach var rule in rules {
-        summary += "=== RULE " + ruleIndex.toString() + " ===\n";
-        summary += "RULE ID (use this for source_refs): " + rule.id + "\n";
+        summary += "=== DOCUMENT " + ruleIndex.toString() + " ===\n";
+        summary += "RULE ID: " + rule.id + "\n";
+        summary += "Document Type: " + (rule.id.includes("table") ? "TAX TABLE (use for brackets/rates)" : "POLICY DOCUMENT (use for formulas/logic)") + "\n";
         summary += "Title: " + rule.title + "\n";
-        summary += "Description: " + rule.description + "\n";
-        summary += "Source Authority: " + rule.source_authority + "\n";
-        summary += "Source Rank: " + rule.source_rank.toString() + "\n";
+        summary += "Authority Level: " + rule.source_rank.toString() + " (" + rule.source_authority + ")\n";
         summary += "Effective Date: " + rule.effective_date + "\n";
-        summary += "Expiry Date: " + rule.expiry_date + "\n";
-        summary += "Rule Data: " + rule.rule_data.toString() + "\n\n";
+
+        // Analyze rule data content
+        json ruleData = rule.rule_data;
+        if (ruleData is map<json>) {
+            map<json> rd = <map<json>>ruleData;
+            summary += "\nContent Analysis:\n";
+
+            // Check for brackets
+            var brackets = rd["brackets"];
+            if (brackets is json[] && brackets.length() > 0) {
+                summary += "- Contains " + brackets.length().toString() + " tax brackets (PRESERVE THESE IN OUTPUT)\n";
+                foreach json bracket in brackets {
+                    if (bracket is map<json>) {
+                        var minIncome = bracket["min_income"];
+                        var maxIncome = bracket["max_income"];
+                        var rate = bracket["rate_percent"] ?: bracket["rate_fraction"];
+                        summary += "  * Bracket: " + (minIncome ?: "0").toString() + "-" + (maxIncome ?: "∞").toString() + " @ " + (rate ?: "0").toString() + "%\n";
+                    }
+                }
+            }
+
+            // Check for formulas
+            var formulas = rd["formulas"];
+            if (formulas is json[] && formulas.length() > 0) {
+                summary += "- Contains " + formulas.length().toString() + " calculation formulas (USE THESE FOR LOGIC)\n";
+                foreach json formula in formulas {
+                    if (formula is map<json>) {
+                        var id = formula["id"];
+                        var expr = formula["expression"];
+                        if (id is string && expr is string) {
+                            summary += "  * " + id + ": " + expr + "\n";
+                        }
+                    }
+                }
+            }
+
+            // Check for field metadata
+            var fieldMeta = rd["field_metadata"];
+            if (fieldMeta is map<json>) {
+                summary += "- Defines " + (<map<json>>fieldMeta).length().toString() + " field definitions\n";
+            }
+
+            // Check for required variables
+            var reqVars = rd["required_variables"];
+            if (reqVars is json[]) {
+                summary += "- Specifies " + reqVars.length().toString() + " required variables\n";
+            }
+        }
+
+        summary += "Raw Data: " + rule.rule_data.toString() + "\n\n";
         ruleIndex += 1;
     }
 
     return summary;
 }
 
-// Build the expected output schema for LLM
+// Build the expected output schema for LLM with enhanced guidance
 function buildAggregationOutputSchema() returns string {
-    return "{\n" +
-            "  \"required_variables\": [string],\n" +
+    return "REQUIRED OUTPUT SCHEMA:\n" +
+            "{\n" +
+            "  \"required_variables\": [string], // ONLY user inputs - never calculated fields\n" +
             "  \"field_metadata\": { [key: string]: {\n" +
             "    \"type\": \"number|string|integer|boolean|date\",\n" +
             "    \"title\": string,\n" +
             "    \"minimum\"?: number,\n" +
             "    \"maximum\"?: number,\n" +
             "    \"unit\"?: string,\n" +
+            "    \"is_calculated\"?: boolean, // true for derived fields, false for user inputs\n" +
             "    \"source_refs\": [{\"ruleId\": \"FULL_RULE_ID_WITH_EVIDENCE_SUFFIX\", \"fieldName\": string}]\n" +
             "  }},\n" +
-            "  \"ui_order\": [string],\n" +
+            "  \"ui_order\": [string], // Order for user input fields only\n" +
+            "  \"brackets\": [{ // REQUIRED: Original bracket structure for form generation\n" +
+            "    \"min_income\": number?,\n" +
+            "    \"max_income\": number?,\n" +
+            "    \"rate_percent\": number, // As percentage (e.g., 6 for 6%)\n" +
+            "    \"rate_fraction\": number, // As decimal (e.g., 0.06 for 6%)\n" +
+            "    \"fixed_amount\": number?,\n" +
+            "    \"bracket_order\": number,\n" +
+            "    \"source_refs\": [{\"ruleId\": \"FULL_RULE_ID_WITH_EVIDENCE_SUFFIX\", \"bracketId\": string}]\n" +
+            "  }],\n" +
             "  \"formulas\": [{\n" +
             "    \"id\": string,\n" +
             "    \"name\": string,\n" +
-            "    \"expression\": string,\n" +
-            "    \"order\": number,\n" +
+            "    \"expression\": string, // Use progressive if-then logic for brackets\n" +
+            "    \"order\": number, // Calculation sequence order\n" +
+            "    \"output_field\": string, // What this formula calculates\n" +
+            "    \"input_dependencies\": [string], // What inputs this needs\n" +
             "    \"source_refs\": [{\"ruleId\": \"FULL_RULE_ID_WITH_EVIDENCE_SUFFIX\", \"formulaId\": string}],\n" +
             "    \"testVectors\": [{\n" +
             "      \"inputs\": { [var: string]: number|string },\n" +
@@ -538,15 +668,13 @@ function buildAggregationOutputSchema() returns string {
             "      \"tolerance\"?: number\n" +
             "    }]\n" +
             "  }],\n" +
-            "  \"brackets\"?: [{\n" +
-            "    \"min_income\"?: number,\n" +
-            "    \"max_income\"?: number|null,\n" +
-            "    \"rate_percent\"?: number,\n" +
-            "    \"rate_fraction\"?: number,\n" +
-            "    \"fixed_amount\"?: number,\n" +
-            "    \"bracket_order\"?: integer,\n" +
-            "    \"source_refs\": [{\"ruleId\": \"FULL_RULE_ID_WITH_EVIDENCE_SUFFIX\", \"bracketIndex\": number}]\n" +
+            "  \"calculation_flow\": [{\n" +
+            "    \"step\": number,\n" +
+            "    \"description\": string,\n" +
+            "    \"formula_id\": string,\n" +
+            "    \"depends_on\": [string] // Previous steps or user inputs\n" +
             "  }],\n" +
+            "  \"progressive_tax_logic\": string, // If-then formula for bracket-based taxes\n" +
             "  \"consolidation_notes\": [string],\n" +
             "  \"conflicts_resolved\": [{\n" +
             "    \"field\": string,\n" +
@@ -554,22 +682,48 @@ function buildAggregationOutputSchema() returns string {
             "    \"reason\": string\n" +
             "  }]\n" +
             "}\n\n" +
-            "CRITICAL: In ALL source_refs, use the complete RULE ID (ending with _evidence), NOT document IDs!\n" +
-            "Example: Use 'doc_temp_paye_doc_1756446524_paye_evidence' NOT 'doc_temp_paye_doc_1756446524'";
+            "CRITICAL REQUIREMENTS:\n" +
+            "1. BRACKETS FIELD: Always include 'brackets' array with original bracket structure\n" +
+            "2. DUAL OUTPUT: Provide both brackets (for forms) AND progressive_tax_logic (for calculation)\n" +
+            "3. RATE FORMATS: Include both rate_percent (6) and rate_fraction (0.06) for compatibility\n" +
+            "4. OUTPUT_FIELD MANDATORY: Every formula MUST have 'output_field' for variable chaining\n" +
+            "   - annual_gross_calculation → output_field: \"annual_gross\"\n" +
+            "   - taxable_income_calculation → output_field: \"taxable_income\"\n" +
+            "   - tax_amount_calculation → output_field: \"tax_amount\"\n\n" +
+            "EXAMPLES:\n" +
+            "For PAYE calculation:\n" +
+            "- required_variables: [\"monthly_regular_profits_from_employment\", \"personal_relief\"]\n" +
+            "- Do NOT include: \"annual_gross\", \"taxable_income\", \"tax_amount\" (these are calculated)\n" +
+            "- brackets: [{\"min_income\": 0, \"max_income\": 150000, \"rate_percent\": 0, \"rate_fraction\": 0}, {\"min_income\": 150001, \"max_income\": 233333, \"rate_percent\": 6, \"rate_fraction\": 0.06, \"fixed_amount\": 9000}]\n" +
+            "- formulas MUST include output_field for variable chaining:\n" +
+            "  [{\"id\": \"annual_gross_calculation\", \"name\": \"Annual Gross Income\", \"expression\": \"12 * monthly_regular_profits_from_employment\", \"order\": 1, \"output_field\": \"annual_gross\", \"input_dependencies\": [\"monthly_regular_profits_from_employment\"]},\n" +
+            "   {\"id\": \"taxable_income_calculation\", \"name\": \"Taxable Income\", \"expression\": \"annual_gross - personal_relief\", \"order\": 2, \"output_field\": \"taxable_income\", \"input_dependencies\": [\"annual_gross\", \"personal_relief\"]},\n" +
+            "   {\"id\": \"tax_amount_calculation\", \"name\": \"Tax Amount\", \"expression\": \"if (taxable_income <= 150000) then 0 else if (taxable_income <= 233333) then (taxable_income * 0.06) - 9000 else...\", \"order\": 3, \"output_field\": \"tax_amount\", \"input_dependencies\": [\"taxable_income\"]}]\n" +
+            "- progressive_tax_logic: \"if (taxable_income <= 150000) then 0 else if (taxable_income <= 233333) then (taxable_income * 0.06) - 9000 else...\"\n\n" +
+            "VALIDATION CHECKLIST:\n" +
+            "1. Can final tax be calculated using ONLY required_variables?\n" +
+            "2. Are formulas properly chained in dependency order?\n" +
+            "3. Does EVERY formula have an 'output_field' that other formulas can reference?\n" +
+            "4. Is progressive tax logic converted to executable formula?\n" +
+            "5. Are all calculated fields marked with is_calculated: true?\n" +
+            "6. Is 'brackets' array present with complete bracket structure?\n\n" +
+            "CRITICAL: Use complete RULE IDs in source_refs, NOT document IDs!\n" +
+            "Example: 'doc_temp_paye_doc_1756446524_paye_evidence' NOT 'doc_temp_paye_doc_1756446524'";
 }
 
 // Call Gemini LLM with aggregation prompt
 function callGeminiForAggregation(string prompt, string calcType) returns json|error {
-    // Reuse the existing Gemini client from admin_service.bal
+    // Enhanced generation config for better logical reasoning
     json body = {
         "contents": [
             {"role": "user", "parts": [{"text": prompt}]}
         ],
         "generationConfig": {
-            "temperature": 0.1,
-            "topP": 0.1,
-            "topK": 40,
+            "temperature": 0.1, // Low temperature for consistent logical output
+            "topP": 0.1, // Low topP for focused reasoning
+            "topK": 20, // Reduced topK for more deterministic responses
             "candidateCount": 1,
+            "maxOutputTokens": 4096, // Increased for complex JSON responses
             "response_mime_type": "application/json"
         }
     };

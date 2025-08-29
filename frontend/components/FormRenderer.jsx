@@ -124,6 +124,140 @@ function ProvenanceDrawer({ isOpen, onClose, field, schema }) {
     );
 }
 
+function CalculationBreakdown({ breakdown, friendlyBreakdown, isLoading }) {
+    const [viewMode, setViewMode] = useState('friendly'); // 'friendly' or 'technical'
+    const [showProcessing, setShowProcessing] = useState(false);
+
+    // Show processing animation for 2 seconds when friendly breakdown is being generated
+    useState(() => {
+        if (isLoading) {
+            setShowProcessing(true);
+            const timer = setTimeout(() => setShowProcessing(false), 2000);
+            return () => clearTimeout(timer);
+        }
+    }, [isLoading]);
+
+    const hasFriendlyBreakdown = Array.isArray(friendlyBreakdown) && friendlyBreakdown.length > 0;
+    const hasBreakdown = Array.isArray(breakdown) && breakdown.length > 0;
+
+    // Default to friendly view if available, otherwise technical
+    const effectiveViewMode = hasFriendlyBreakdown ? viewMode : 'technical';
+
+    return (
+        <div>
+            <div className="flex items-center justify-between mb-3">
+                <h4 className="font-medium text-green-800">Calculation Details</h4>
+
+                {/* View toggle buttons */}
+                {hasFriendlyBreakdown && (
+                    <div className="flex bg-gray-100 rounded-lg p-1">
+                        <button
+                            onClick={() => setViewMode('friendly')}
+                            className={`px-3 py-1 rounded text-sm font-medium transition-colors ${viewMode === 'friendly'
+                                    ? 'bg-white text-green-800 shadow-sm'
+                                    : 'text-gray-600 hover:text-gray-800'
+                                }`}
+                        >
+                            Simple View
+                        </button>
+                        <button
+                            onClick={() => setViewMode('technical')}
+                            className={`px-3 py-1 rounded text-sm font-medium transition-colors ${viewMode === 'technical'
+                                    ? 'bg-white text-green-800 shadow-sm'
+                                    : 'text-gray-600 hover:text-gray-800'
+                                }`}
+                        >
+                            Technical View
+                        </button>
+                    </div>
+                )}
+            </div>
+
+            {/* Loading state for friendly breakdown generation */}
+            {showProcessing && !hasFriendlyBreakdown && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                    <div className="flex items-center space-x-3">
+                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                        <div>
+                            <div className="text-sm font-medium text-blue-800">
+                                Generating user-friendly explanation...
+                            </div>
+                            <div className="text-xs text-blue-600">
+                                Our AI is converting the technical calculation into easy-to-understand language
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Friendly Breakdown */}
+            {effectiveViewMode === 'friendly' && hasFriendlyBreakdown && (
+                <div className="bg-white border rounded-lg p-4 space-y-4">
+                    {friendlyBreakdown.map((step, i) => (
+                        <div key={i} className="border-b border-gray-100 last:border-b-0 pb-4 last:pb-0">
+                            <div className="flex items-start justify-between gap-4">
+                                <div className="flex-1">
+                                    <h5 className="font-semibold text-gray-900 mb-1">{step.title}</h5>
+                                    <p className="text-gray-600 text-sm mb-2">{step.description}</p>
+                                    <div className="text-sm text-gray-700 bg-gray-50 rounded p-2">
+                                        {step.calculation}
+                                    </div>
+                                    {step.explanation && (
+                                        <div className="text-xs text-blue-600 mt-2 italic">
+                                            💡 {step.explanation}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="text-right">
+                                    <div className="font-semibold text-lg text-gray-900">
+                                        {step.amount || formatCurrency(step.result)}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Technical Breakdown */}
+            {effectiveViewMode === 'technical' && hasBreakdown && (
+                <div className="bg-white p-3 rounded border text-sm overflow-auto">
+                    <ul className="space-y-2">
+                        {breakdown.map((s, i) => (
+                            <li key={i} className="flex items-start justify-between gap-4">
+                                <div>
+                                    <div className="font-medium text-gray-900">{s.name}</div>
+                                    <div className="text-gray-600">{s.expression}{s.substituted ? ` = ${s.substituted}` : ""}</div>
+                                </div>
+                                <div className="text-gray-900 font-semibold whitespace-nowrap">{formatCurrency(s.result)}</div>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+
+            {/* Fallback message */}
+            {!hasFriendlyBreakdown && viewMode === 'friendly' && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                    <div className="flex items-center space-x-2">
+                        <svg className="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                        </svg>
+                        <div>
+                            <div className="text-sm font-medium text-yellow-800">
+                                Simple explanation not available
+                            </div>
+                            <div className="text-xs text-yellow-600">
+                                Showing technical breakdown instead
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
 function Field({ name, schema, value, required, onChange, onShowProvenance }) {
     const type = schema?.type;
     const title = schema?.title || name.replaceAll('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
@@ -460,20 +594,11 @@ export default function FormRenderer({ schemaBlob, schemaType, targetDate, apiBa
                     </div>
                     {Array.isArray(calcResult?.breakdown) && calcResult.breakdown.length > 0 && (
                         <div className="mt-4">
-                            <h4 className="font-medium text-green-800 mb-2">Breakdown</h4>
-                            <div className="bg-white p-3 rounded border text-sm overflow-auto">
-                                <ul className="space-y-2">
-                                    {calcResult.breakdown.map((s, i) => (
-                                        <li key={i} className="flex items-start justify-between gap-4">
-                                            <div>
-                                                <div className="font-medium text-gray-900">{s.name}</div>
-                                                <div className="text-gray-600">{s.expression}{s.substituted ? ` = ${s.substituted}` : ""}</div>
-                                            </div>
-                                            <div className="text-gray-900 font-semibold whitespace-nowrap">{formatCurrency(s.result)}</div>
-                                        </li>
-                                    ))}
-                                </ul>
-                            </div>
+                            <CalculationBreakdown
+                                breakdown={calcResult.breakdown}
+                                friendlyBreakdown={calcResult.friendlyBreakdown}
+                                isLoading={calcLoading}
+                            />
                         </div>
                     )}
 

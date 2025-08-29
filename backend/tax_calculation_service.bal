@@ -146,6 +146,7 @@ returns DynamicCalculationResult|error {
         string formulaId = getStringFromFormula(formula, "id");
         string formulaName = getStringFromFormula(formula, "name");
         string expression = getStringFromFormula(formula, "expression");
+        string outputField = getStringFromFormula(formula, "output_field");
 
         if (expression.trim().length() == 0) {
             continue;
@@ -160,7 +161,9 @@ returns DynamicCalculationResult|error {
         decimal formulaResult = result;
 
         // Store result as variable for subsequent formulas
-        context.variables[formulaId] = formulaResult;
+        // Use output_field if available, otherwise fall back to formulaId
+        string variableName = outputField.length() > 0 ? outputField : formulaId;
+        context.variables[variableName] = formulaResult;
 
         // Create substituted expression for display
         string substituted = substituteVariablesInExpression(expression, context);
@@ -395,6 +398,22 @@ function executeMinFunction(string expression, CalculationContext context) retur
 // Evaluate arithmetic expressions (addition, subtraction, multiplication, division)
 function evaluateArithmeticExpression(string expression, CalculationContext context) returns decimal|error {
     string expr = expression.trim();
+
+    // Handle conditional expressions (if-then-else)
+    if (expr.startsWith("if ")) {
+        return evaluateConditionalExpression(expr, context);
+    }
+
+    // Handle parentheses by recursively evaluating inner expressions
+    if (expr.startsWith("(") && expr.endsWith(")")) {
+        string inner = expr.substring(1, expr.length() - 1).trim();
+        return evaluateArithmeticExpression(inner, context);
+    }
+
+    // Handle expressions with parentheses in the middle
+    if (expr.includes("(")) {
+        return evaluateExpressionWithParentheses(expr, context);
+    }
 
     // Handle simple variable lookup
     if (isSimpleVariable(expr)) {
@@ -890,6 +909,206 @@ function logCalculationError(string executionId, string schemaType, json schema,
 }
 
 // Build a uniform JSON response and audit record
+// Generate user-friendly explanations for calculation breakdown using LLM
+function generateFriendlyExplanations(Step[] breakdown, string calcType, map<json> inputs, decimal finalAmount) returns json[]|error {
+    if (breakdown.length() == 0) {
+        return [];
+    }
+
+    // Build context for LLM
+    string calculationType = calcType == "paye" ? "PAYE Tax" :
+            calcType == "income_tax" ? "Income Tax" :
+                calcType == "vat" ? "VAT" : calcType;
+
+    string inputsText = "";
+    foreach var entry in inputs.entries() {
+        string key = entry[0];
+        json value = entry[1];
+        string friendlyKey = makeFriendlyFieldName(key);
+        inputsText += "- " + friendlyKey + ": " + value.toString() + "\n";
+    }
+
+    string breakdownText = "";
+    foreach Step step in breakdown {
+        breakdownText += "Step: " + step.name + "\n";
+        breakdownText += "Formula: " + step.expression + "\n";
+        breakdownText += "Substituted: " + step.substituted + "\n";
+        breakdownText += "Result: " + step.result.toString() + "\n\n";
+    }
+
+    string prompt = "You are a tax calculation assistant helping users understand their " + calculationType + " calculation in Sri Lanka.\n\n" +
+        "USER INPUTS:\n" + inputsText + "\n" +
+        "TECHNICAL CALCULATION BREAKDOWN:\n" + breakdownText +
+        "FINAL RESULT: LKR " + finalAmount.toString() + "\n\n" +
+        "Please convert this technical breakdown into simple, user-friendly explanations that a regular person can easily understand. " +
+        "For each calculation step, provide:\n" +
+        "1. A clear title (not technical field names)\n" +
+        "2. A simple explanation of what was calculated\n" +
+        "3. The calculation in human-readable format\n" +
+        "4. The result with proper currency formatting\n\n" +
+        "For complex tax bracket calculations, explain which tax bracket applies and why. " +
+        "Use simple language and avoid technical jargon. " +
+        "Format the response as a JSON array with this structure:\n" +
+        "[\n" +
+        "  {\n" +
+        "    \"title\": \"Simple step name\",\n" +
+        "    \"description\": \"What this step calculates in simple terms\",\n" +
+        "    \"calculation\": \"Human-readable calculation (e.g., 'Monthly salary × 12 months')\",\n" +
+        "    \"amount\": \"LKR 1,800,000.00\",\n" +
+        "    \"explanation\": \"Additional context if needed (optional)\"\n" +
+        "  }\n" +
+        "]\n\n" +
+        "IMPORTANT: Return only the JSON array, no other text.";
+
+    // Call Gemini LLM
+    json|error llmResponse = callGeminiForExplanation(prompt);
+    if (llmResponse is error) {
+        return error("Failed to generate friendly explanations: " + llmResponse.message());
+    }
+
+    // Parse and validate response
+    if (llmResponse is json[]) {
+        return llmResponse;
+    } else {
+        log:printWarn("LLM returned unexpected format for friendly explanations");
+        return [];
+    }
+}
+
+// Convert technical field names to user-friendly names
+function makeFriendlyFieldName(string fieldName) returns string {
+    if (fieldName == "monthly_regular_profits_from_employment") {
+        return "Monthly Salary";
+    } else if (fieldName == "personal_relief") {
+        return "Personal Relief Amount";
+    } else if (fieldName == "annual_gross") {
+        return "Annual Gross Income";
+    } else if (fieldName == "taxable_income") {
+        return "Taxable Income";
+    } else if (fieldName == "tax_amount") {
+        return "Tax Amount";
+    } else {
+        // Convert snake_case to Title Case
+        string[] parts = [];
+        string current = "";
+        int i = 0;
+        while (i < fieldName.length()) {
+            string char = fieldName.substring(i, i + 1);
+            if (char == "_") {
+                if (current.length() > 0) {
+                    parts.push(current);
+                    current = "";
+                }
+            } else {
+                current += char;
+            }
+            i += 1;
+        }
+        if (current.length() > 0) {
+            parts.push(current);
+        }
+
+        string result = "";
+        foreach int idx in 0 ..< parts.length() {
+            if (idx > 0) {
+                result += " ";
+            }
+            string part = parts[idx];
+            if (part.length() > 0) {
+                result += part.substring(0, 1).toUpperAscii() + part.substring(1).toLowerAscii();
+            }
+        }
+        return result;
+    }
+}
+
+// Call Gemini LLM for explanation generation
+function callGeminiForExplanation(string prompt) returns json|error {
+    json body = {
+        "contents": [
+            {"role": "user", "parts": [{"text": prompt}]}
+        ],
+        "generationConfig": {
+            "temperature": 0.3, // Moderate creativity for user-friendly explanations
+            "topP": 0.8,
+            "topK": 40,
+            "candidateCount": 1,
+            "maxOutputTokens": 2048,
+            "response_mime_type": "application/json"
+        }
+    };
+
+    string path = "/v1beta/models/" + GEMINI_TEXT_MODEL + ":generateContent?key=" + GEMINI_API_KEY;
+
+    http:Response|error resp = geminiTextClient->post(path, body);
+    if (resp is error) {
+        return error("LLM call failed: " + resp.message());
+    }
+
+    json|error payload = resp.getJsonPayload();
+    if (payload is error) {
+        return error("Failed to parse LLM response: " + payload.message());
+    }
+
+    if (!(payload is map<json>)) {
+        return error("Invalid LLM response format");
+    }
+
+    map<json> response = <map<json>>payload;
+    json? candidates = response["candidates"];
+    if (!(candidates is json[])) {
+        return error("No candidates in LLM response");
+    }
+
+    json[] candidateArray = <json[]>candidates;
+    if (candidateArray.length() == 0) {
+        return error("Empty candidates array");
+    }
+
+    json firstCandidate = candidateArray[0];
+    if (!(firstCandidate is map<json>)) {
+        return error("Invalid candidate format");
+    }
+
+    map<json> candidate = <map<json>>firstCandidate;
+    json? content = candidate["content"];
+    if (!(content is map<json>)) {
+        return error("No content in candidate");
+    }
+
+    map<json> contentMap = <map<json>>content;
+    json? parts = contentMap["parts"];
+    if (!(parts is json[])) {
+        return error("No parts in content");
+    }
+
+    json[] partsArray = <json[]>parts;
+    if (partsArray.length() == 0) {
+        return error("Empty parts array");
+    }
+
+    json firstPart = partsArray[0];
+    if (!(firstPart is map<json>)) {
+        return error("Invalid part format");
+    }
+
+    map<json> part = <map<json>>firstPart;
+    json? text = part["text"];
+    if (!(text is string)) {
+        return error("No text in part");
+    }
+
+    string responseText = <string>text;
+
+    // Parse the JSON response
+    json|error parsed = v:fromJsonString(responseText);
+    if (parsed is error) {
+        return error("Failed to parse LLM JSON response: " + parsed.message());
+    }
+
+    return parsed;
+}
+
 function buildCalcResponse(json schema, string calcType, decimal finalAmount, Step[] breakdown, map<json> inputs, string execId, FormulaRef[] formulas) returns json {
     string schemaId = "";
     int schemaVersion = 0;
@@ -904,13 +1123,13 @@ function buildCalcResponse(json schema, string calcType, decimal finalAmount, St
         }
     }
 
-    CalculationResult result = {
+    CalculationResult calcResultRec = {
         success: true,
-        schemaId,
-        schemaVersion,
+        schemaId: schemaId,
+        schemaVersion: schemaVersion,
         calculationType: calcType,
         result: finalAmount,
-        breakdown,
+        breakdown: breakdown,
         inputs: inputs,
         formulasUsed: formulas,
         executionId: execId,
@@ -918,7 +1137,7 @@ function buildCalcResponse(json schema, string calcType, decimal finalAmount, St
     };
 
     // Best-effort audit insert
-    logCalculationAudit(result);
+    logCalculationAudit(calcResultRec);
 
     // Convert breakdown to JSON for response
     json[] breakdownJson = [];
@@ -930,6 +1149,15 @@ function buildCalcResponse(json schema, string calcType, decimal finalAmount, St
         formulasJson.push({name: f.name, expression: f.expression});
     }
 
+    // Generate user-friendly explanations using LLM
+    json[] friendlyBreakdown = [];
+    json[]|error _friendlyBreakdownResult = generateFriendlyExplanations(breakdown, calcType, inputs, finalAmount);
+    if (_friendlyBreakdownResult is json[]) {
+        friendlyBreakdown = _friendlyBreakdownResult;
+    } else if (_friendlyBreakdownResult is error) {
+        log:printWarn("Failed to generate friendly explanations: " + _friendlyBreakdownResult.message());
+    }
+
     return {
         success: true,
         schemaId: schemaId,
@@ -937,10 +1165,205 @@ function buildCalcResponse(json schema, string calcType, decimal finalAmount, St
         calculationType: calcType,
         result: finalAmount,
         breakdown: breakdownJson,
+        friendlyBreakdown: friendlyBreakdown,
         inputs: inputs,
         formulasUsed: formulasJson,
         executionId: execId,
         createdAt: time:utcNow().toString()
     };
+}
+
+// Handle expressions with parentheses like (a * b) - c
+function evaluateExpressionWithParentheses(string expression, CalculationContext context) returns decimal|error {
+    string expr = expression.trim();
+
+    // Find and evaluate innermost parentheses first
+    while (expr.includes("(")) {
+        // Find the last opening parenthesis (innermost)
+        int lastOpen = -1;
+        int i = 0;
+        while (i < expr.length()) {
+            if (expr.substring(i, i + 1) == "(") {
+                lastOpen = i;
+            }
+            i += 1;
+        }
+
+        if (lastOpen < 0) {
+            break;
+        }
+
+        // Find the matching closing parenthesis
+        int matchingClose = -1;
+        i = lastOpen + 1;
+        while (i < expr.length()) {
+            if (expr.substring(i, i + 1) == ")") {
+                matchingClose = i;
+                break;
+            }
+            i += 1;
+        }
+
+        if (matchingClose < 0) {
+            return error("Mismatched parentheses in expression: " + expression);
+        }
+
+        // Extract and evaluate the content inside parentheses
+        string innerExpr = expr.substring(lastOpen + 1, matchingClose);
+        decimal|error innerResult = evaluateArithmeticExpression(innerExpr, context);
+        if (innerResult is error) {
+            return innerResult;
+        }
+
+        // Replace the parenthetical expression with its result
+        string before = expr.substring(0, lastOpen);
+        string after = expr.substring(matchingClose + 1);
+        expr = before + innerResult.toString() + after;
+    }
+
+    // Now evaluate the expression without parentheses
+    return evaluateArithmeticExpression(expr, context);
+}
+
+// Evaluate conditional expressions (if-then-else)
+function evaluateConditionalExpression(string expression, CalculationContext context) returns decimal|error {
+    string expr = expression.trim();
+
+    // Parse if-then-else chain
+    // Format: if (condition) then (value) else if (condition) then (value) else (value)
+
+    // Find the first 'if' condition
+    int ifPos = findIndexAt(expr, "if ", 0);
+    if (ifPos != 0) {
+        return error("Invalid conditional expression: must start with 'if'");
+    }
+
+    // Parse the chain of conditions
+    return parseIfThenElseChain(expr, context);
+}
+
+function parseIfThenElseChain(string expr, CalculationContext context) returns decimal|error {
+    string remaining = expr.trim();
+
+    while (remaining.startsWith("if ")) {
+        // Extract condition between 'if' and 'then'
+        int ifStart = findIndexAt(remaining, "if ", 0);
+        int thenPos = findIndexAt(remaining, " then ", 0);
+        if (thenPos <= ifStart) {
+            return error("Invalid conditional: missing 'then' after 'if'");
+        }
+
+        string conditionStr = remaining.substring(ifStart + 3, thenPos).trim();
+
+        // Evaluate condition
+        boolean|error conditionResult = evaluateCondition(conditionStr, context);
+        if (conditionResult is error) {
+            return conditionResult;
+        }
+
+        if (conditionResult) {
+            // Condition is true, evaluate the 'then' part
+            int thenStart = thenPos + 6; // Skip " then "
+            int elsePos = findNextElse(remaining, thenStart);
+
+            string thenExpr;
+            if (elsePos > 0) {
+                thenExpr = remaining.substring(thenStart, elsePos).trim();
+            } else {
+                thenExpr = remaining.substring(thenStart).trim();
+            }
+
+            // Don't automatically remove parentheses - let the arithmetic evaluator handle them
+            return evaluateArithmeticExpression(thenExpr, context);
+        } else {
+            // Condition is false, move to else part
+            int elsePos = findNextElse(remaining, thenPos + 6);
+            if (elsePos <= 0) {
+                return error("Invalid conditional: missing 'else' part");
+            }
+
+            remaining = remaining.substring(elsePos + 5).trim(); // Skip " else "
+
+            // Check if this is another 'if' or final value
+            if (!remaining.startsWith("if ")) {
+                // Final else value - don't automatically remove parentheses
+                return evaluateArithmeticExpression(remaining, context);
+            }
+            // Continue loop for next 'else if'
+        }
+    }
+
+    return error("Invalid conditional expression structure");
+}
+
+function findNextElse(string expr, int startPos) returns int {
+    // Find " else " that's not part of a nested expression
+    int pos = startPos;
+    int parenCount = 0;
+
+    while (pos < expr.length() - 4) {
+        string char = expr.substring(pos, pos + 1);
+
+        if (char == "(") {
+            parenCount += 1;
+        } else if (char == ")") {
+            parenCount -= 1;
+        } else if (parenCount == 0 && expr.substring(pos, pos + 5) == " else") {
+            return pos;
+        }
+
+        pos += 1;
+    }
+
+    return -1;
+}
+
+function evaluateCondition(string condition, CalculationContext context) returns boolean|error {
+    string cond = condition.trim();
+
+    // Remove outer parentheses if present
+    if (cond.startsWith("(") && cond.endsWith(")")) {
+        cond = cond.substring(1, cond.length() - 1).trim();
+    }
+
+    // Handle comparison operators
+    string[] comparisonOps = ["<=", ">=", "<", ">", "==", "!="];
+
+    foreach string op in comparisonOps {
+        int opPos = findIndexAt(cond, op, 0);
+        if (opPos > 0) {
+            string leftStr = cond.substring(0, opPos).trim();
+            string rightStr = cond.substring(opPos + op.length()).trim();
+
+            decimal|error leftVal = evaluateArithmeticExpression(leftStr, context);
+            decimal|error rightVal = evaluateArithmeticExpression(rightStr, context);
+
+            if (leftVal is error) {
+                return leftVal;
+            }
+            if (rightVal is error) {
+                return rightVal;
+            }
+
+            decimal left = leftVal;
+            decimal right = rightVal;
+
+            if (op == "<=") {
+                return left <= right;
+            } else if (op == ">=") {
+                return left >= right;
+            } else if (op == "<") {
+                return left < right;
+            } else if (op == ">") {
+                return left > right;
+            } else if (op == "==") {
+                return left == right;
+            } else if (op == "!=") {
+                return left != right;
+            }
+        }
+    }
+
+    return error("Invalid condition: " + condition);
 }
 
