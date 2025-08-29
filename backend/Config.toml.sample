@@ -3,7 +3,7 @@
 
 [oasis.backend]
 # Google Gemini API Configuration
-GEMINI_API_KEY = "AIzaSyBn6yGwy4qFCftrlcN_OMFKkRX6m_e8ibA"
+GEMINI_API_KEY = "AIzaSyAYEaaIIwtShOwWuSU_U63fEbwT3-ITdDI"
 
 # Tokenizer Service Configuration (for local development)
 TOKENIZER_SERVICE_URL = "http://localhost:3001"

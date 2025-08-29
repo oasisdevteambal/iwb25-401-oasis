@@ -37,6 +37,9 @@ export default function RootLayout({ children }) {
                 <a href="/forms" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
                   Forms
                 </a>
+                <a href="/chat" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
+                  Chat Assistant
+                </a>
                 <a href="/history" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
                   History
                 </a>

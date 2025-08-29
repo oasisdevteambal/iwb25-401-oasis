@@ -256,6 +256,10 @@ create index IF not exists idx_tax_rules_rule_data_gin on public.tax_rules using
 
 create index IF not exists idx_tax_rules_rule_category on public.tax_rules using btree (rule_category) TABLESPACE pg_default;
 
+create index IF not exists idx_tax_rules_conflict_metadata on public.tax_rules using gin (((rule_data -> 'conflict_analysis'::text))) TABLESPACE pg_default;
+
+create index IF not exists idx_tax_rules_effective_expiry on public.tax_rules using btree (effective_date, expiry_date, rule_category) TABLESPACE pg_default;
+
 create trigger update_tax_rules_updated_at BEFORE
 update on tax_rules for EACH row
 execute FUNCTION update_updated_at_column ();
@@ -703,22 +707,13 @@ create table public.rule_conflicts (
   details jsonb null,
   created_at timestamp without time zone null default now(),
   resolved_at timestamp without time zone null,
+  aggregated_rule_id text null,
+  field_name text null,
+  conflict_type text null,
+  description text null,
+  resolution_method text null,
   constraint rule_conflicts_pkey primary key (id),
-  constraint valid_conflict_aspect check (
-    (
-      aspect = any (
-        array[
-          'brackets'::text,
-          'thresholds'::text,
-          'definitions'::text,
-          'formulas'::text,
-          'units'::text,
-          'inputs'::text,
-          'other'::text
-        ]
-      )
-    )
-  ),
+  constraint rule_conflicts_aggregated_rule_id_fkey foreign KEY (aggregated_rule_id) references tax_rules (id) on delete CASCADE,
   constraint valid_conflict_status check (
     (
       status = any (
@@ -730,12 +725,29 @@ create table public.rule_conflicts (
         ]
       )
     )
+  ),
+  constraint valid_conflict_type check (
+    (
+      conflict_type = any (
+        array[
+          'formula_expression_mismatch'::text,
+          'bracket_structure_mismatch'::text,
+          'field_type_mismatch'::text,
+          'variable_set_mismatch'::text,
+          'overlapping_effective_periods'::text
+        ]
+      )
+    )
   )
 ) TABLESPACE pg_default;
 
 create index IF not exists idx_rule_conflicts_lookup on public.rule_conflicts using btree (tax_type, target_date desc) TABLESPACE pg_default;
 
 create index IF not exists idx_rule_conflicts_status on public.rule_conflicts using btree (status) TABLESPACE pg_default;
+
+create index IF not exists idx_rule_conflicts_aggregated_rule on public.rule_conflicts using btree (aggregated_rule_id) TABLESPACE pg_default;
+
+create index IF not exists idx_rule_conflicts_type_field on public.rule_conflicts using btree (conflict_type, field_name) TABLESPACE pg_default;
 ```
 
 
@@ -1051,3 +1063,31 @@ create index IF not exists idx_preflight_runs_lookup on public.preflight_runs us
 ```
 
 
+### 26. conflict analysis report view
+
+```sql
+create view public.conflict_analysis_report as
+select
+  ar.tax_type,
+  ar.target_date,
+  ar.conflicts_count,
+  ar.status as aggregation_status,
+  count(rc.id) as stored_conflicts,
+  array_agg(distinct rc.conflict_type) as conflict_types,
+  array_agg(distinct rc.resolution_method) as resolution_methods,
+  ar.started_at,
+  ar.finished_at
+from
+  aggregation_runs ar
+  left join rule_conflicts rc on (ar.details ->> 'aggregatedRuleId'::text) = rc.aggregated_rule_id
+where
+  ar.conflicts_count > 0
+group by
+  ar.id,
+  ar.tax_type,
+  ar.target_date,
+  ar.conflicts_count,
+  ar.status,
+  ar.started_at,
+  ar.finished_at;
+```

@@ -4,8 +4,7 @@ import ballerina/log;
 import ballerina/sql;
 import ballerina/time;
 
-configurable string GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
-configurable string GEMINI_TEXT_MODEL = "gemini-1.5-flash";
+// GEMINI_* configurables are defined in config/gemini_config.bal
 
 // Conservative caps to bound LLM latency
 final int CUE_LIMIT = 300; // max number of chunks to include as cues
@@ -522,9 +521,29 @@ function collectCuesForDocument(string docId) returns Cue[]|error {
 }
 
 function runStrictMetadataLLM(string calcType, Cue[] cues) returns json|error {
-    // Build a compact prompt with explicit JSON schema and constraints.
-    string sys = "You are an expert tax metadata extractor. Output ONLY strict JSON with canonical ids; never invent numbers.";
-    string schema = "{\n  \"required_variables\": [string],\n  \"field_metadata\": { [key: string]: {\n    \"type\": \"number|string|integer|boolean|date\",\n    \"title\": string,\n    \"minimum\"?: number,\n    \"maximum\"?: number,\n    \"unit\"?: string,\n    \"source_refs\": [{\"chunkId\": string, \"line\": number}]\n  } },\n  \"ui_order\": [string],\n  \"formulas\": [ ]\n}";
+    // Build a robust prompt with strict schema, DSL, domain coverage, and JSON-only output.
+    string sys = "You are a Sri Lankan tax law extraction assistant. Output exactly one JSON object that strictly conforms to the provided schema. Extract only what is explicitly and unambiguously present in the cues. Do not invent numbers, rates, or variables not present in the document. If a formula can't be fully specified from the cues, omit it. If no tax brackets are defined in the cues, omit the brackets field entirely.";
+
+    // Constraints and domain coverage
+    string constraints = "Constraints\n- Variables: only use variables that you include in required_variables (and define in field_metadata).\n- Formula DSL: variables, numbers, + - * / ^ ( ), and functions max(a,b), min(a,b), round(x,2), pct(x) (x/100), progressiveTax(taxable_income).\n- No string ops, no assignments, no braces, no quotes inside expression.\n- Grounding: every formula must include at least 1 source_refs entry pointing to cue chunkId and line.\n- Test vectors: each formula must include at least 2 testVectors that PASS when evaluating the expression (tolerance default 0.01).\n- Validation: every variable in any expression MUST appear in required_variables; required_variables must at least cover all variables used in formulas; ui_order lists input variables for UI.\n- Brackets are OPTIONAL: only include a 'brackets' array if the cues explicitly provide a bracket schedule (table or prose with ranges and rates). If absent, omit 'brackets'.\n- Do NOT hallucinate or interpolate bracket bounds or rates. If a bracket row is incomplete or ambiguous, skip that row.\n- For the top open-ended bracket, set max_income to null or omit it. Prefer rate_percent; if both are present, ensure rate_fraction = rate_percent/100 when you include it.\n- Do NOT inline bracket rates inside expression strings; use progressiveTax(taxable_income) instead.";
+
+    string coverage;
+    if (calcType == "paye") {
+        coverage = "Domain coverage (paye): include formulas for taxable_income and monthly_paye using progressiveTax(taxable_income). If explicit PAYE brackets are shown, extract them into 'brackets'. If no brackets are present in the cues, omit 'brackets'. Do not inline bracket rates; rely on progressiveTax.";
+    } else if (calcType == "income_tax") {
+        coverage = "Domain coverage (income_tax): include formulas for taxable_income and annual_tax_due using progressiveTax(taxable_income). If explicit annual income tax brackets are shown, extract them into 'brackets'. If no brackets are present in the cues, omit 'brackets'. Do not inline bracket rates; rely on progressiveTax.";
+    } else if (calcType == "vat") {
+        coverage = "Domain coverage (vat): include taxable_supplies, output_tax, input_tax_credit, and net_vat_payable (net_vat_payable = output_tax - input_tax_credit). If the cues include explicit VAT tiers or thresholds (e.g., turnover-based rates), you may include them in 'brackets'; otherwise omit 'brackets'.";
+    } else {
+        coverage = "";
+    }
+
+    // JSON schema (literal)
+    string schema = "{\n  \"required_variables\": [string],\n  \"field_metadata\": { [key: string]: {\n    \"type\": \"number|string|integer|boolean|date\",\n    \"title\": string,\n    \"minimum\"?: number,\n    \"maximum\"?: number,\n    \"unit\"?: string,\n    \"source_refs\": [{\"chunkId\": string, \"line\": number}]\n  }},\n  \"ui_order\": [string],\n  \"formulas\": [{\n    \"id\": string,\n    \"name\": string,\n    \"expression\": string,\n    \"order\": number,\n    \"source_refs\": [{\"chunkId\": string, \"line\": number}],\n    \"testVectors\": [{\n      \"inputs\": { [var: string]: number|string },\n      \"expectedResult\": number,\n      \"tolerance\"?: number\n    }]\n  }],\n  \"brackets\"?: [{\n    \"min_income\"?: number,\n    \"max_income\"?: number|null,\n    \"rate_percent\"?: number,\n    \"rate_fraction\"?: number,\n    \"fixed_amount\"?: number,\n    \"bracket_order\"?: integer,\n    \"notes\"?: string,\n    \"source_refs\": [{\"chunkId\": string, \"line\": number}]\n  }],\n  \"warnings\"?: [string]\n}";
+
+    // Tiny few-shot example (generic)
+    string fewShot = "Example cues:\n[H1] PAYE computation\n[T] Taxable income = monthly regular profits from employment - personal relief\n[T] Apply PAYE brackets to taxable income to compute monthly PAYE\n[T] Table: PAYE Rate Schedule (Monthly)\n[T] 0 - 100,000 : 0%\n[T] 100,000 - 200,000 : 6%\n[T] 200,000 and above : 12%\n\nValid example (illustrative):\n{\n  \"required_variables\": [\"monthly_regular_profits_from_employment\",\"personal_relief\",\"taxable_income\"],\n  \"field_metadata\": {\n    \"monthly_regular_profits_from_employment\":{\"type\":\"number\",\"title\":\"Monthly Regular Profits\",\"source_refs\":[{\"chunkId\":\"C12\",\"line\":4}]},\n    \"personal_relief\":{\"type\":\"number\",\"title\":\"Personal Relief\",\"source_refs\":[{\"chunkId\":\"C12\",\"line\":5}]}\n  },\n  \"ui_order\": [\"monthly_regular_profits_from_employment\",\"personal_relief\"],\n  \"formulas\": [{\n    \"id\":\"taxable_income\",\n    \"name\":\"Taxable Income\",\n    \"expression\":\"monthly_regular_profits_from_employment - personal_relief\",\n    \"order\":1,\n    \"source_refs\":[{\"chunkId\":\"C12\",\"line\":6}],\n    \"testVectors\":[\n      {\"inputs\":{\"monthly_regular_profits_from_employment\":200000,\"personal_relief\":100000},\"expectedResult\":100000},\n      {\"inputs\":{\"monthly_regular_profits_from_employment\":150000,\"personal_relief\":50000},\"expectedResult\":100000}\n    ]\n  },{\n    \"id\":\"monthly_paye\",\n    \"name\":\"Monthly PAYE\",\n    \"expression\":\"progressiveTax(taxable_income)\",\n    \"order\":2,\n    \"source_refs\":[{\"chunkId\":\"C12\",\"line\":7}],\n    \"testVectors\":[\n      {\"inputs\":{\"monthly_regular_profits_from_employment\":200000,\"personal_relief\":100000},\"expectedResult\":0,\"tolerance\":0.01},\n      {\"inputs\":{\"monthly_regular_profits_from_employment\":300000,\"personal_relief\":100000},\"expectedResult\":0,\"tolerance\":0.01}\n    ]\n  }],\n  \"brackets\": [\n    {\"min_income\":0,\"max_income\":100000,\"rate_percent\":0,\"bracket_order\":1,\"source_refs\":[{\"chunkId\":\"C13\",\"line\":1}]},\n    {\"min_income\":100000,\"max_income\":200000,\"rate_percent\":6,\"bracket_order\":2,\"source_refs\":[{\"chunkId\":\"C13\",\"line\":2}]},\n    {\"min_income\":200000,\"max_income\":null,\"rate_percent\":12,\"bracket_order\":3,\"source_refs\":[{\"chunkId\":\"C13\",\"line\":3}]}\n  ]\n}\n\nIf cues have no bracket schedule, omit the 'brackets' field entirely.";
+
     string cueText = "";
     int cueCount = cues.length();
     foreach Cue c in cues {
@@ -537,8 +556,15 @@ function runStrictMetadataLLM(string calcType, Cue[] cues) returns json|error {
     log:printInfo("[extract-metadata] LLM request start: type=" + calcType + ", cues=" + cueCount.toString() + ", promptChars=" + cueText.length().toString());
     json body = {
         "contents": [
-            {"role": "user", "parts": [{"text": sys + "\nTax type: " + calcType + "\nJSON schema:" + schema + "\nCues:" + cueText + "\nRespond with JSON only."}]}
-        ]
+            {"role": "user", "parts": [{"text": sys + "\n\n" + constraints + "\n" + coverage + "\n\nJSON schema:" + schema + "\n\n" + fewShot + "\n\nCues:" + cueText + "\nReturn only the final JSON."}]}
+        ],
+        "generationConfig": {
+            "temperature": 0.1,
+            "topP": 0.1,
+            "topK": 40,
+            "candidateCount": 1,
+            "response_mime_type": "application/json"
+        }
     };
     string path = "/v1beta/models/" + GEMINI_TEXT_MODEL + ":generateContent?key=" + GEMINI_API_KEY;
     log:printInfo("[extract-metadata] Sending request to Gemini model '" + GEMINI_TEXT_MODEL + "'");
@@ -553,29 +579,58 @@ function runStrictMetadataLLM(string calcType, Cue[] cues) returns json|error {
     }
     // Extract text from candidates
     string out = "";
-    if (payload is map<json> && payload.hasKey("candidates")) {
-        var candJ = (<map<json>>payload)["candidates"];
-        if (candJ is json[] && candJ.length() > 0) {
-            json c0 = candJ[0];
-            if (c0 is map<json>) {
-                var content = c0["content"];
-                if (content is map<json>) {
-                    var parts = content["parts"];
-                    if (parts is json[] && parts.length() > 0) {
-                        json p0 = parts[0];
-                        if (p0 is map<json>) {
-                            var txt = p0["text"];
-                            if (txt is string) {
-                                out = txt;
+    string finishReason = "";
+    string safetyMsg = "";
+    if (payload is map<json>) {
+        var candJ = (<map<json>>payload)["candidates"] ?: ();
+        if (candJ is json[]) {
+            foreach json cand in candJ {
+                if (cand is map<json>) {
+                    // Track finish reason if provided
+                    var fr = cand["finishReason"] ?: ();
+                    if (fr is string && finishReason.length() == 0) {
+                        finishReason = fr;
+                    }
+                    var content = cand["content"] ?: ();
+                    if (content is map<json>) {
+                        var parts = content["parts"] ?: ();
+                        if (parts is json[]) {
+                            foreach json part in parts {
+                                if (part is map<json>) {
+                                    var txt = part["text"] ?: ();
+                                    if (txt is string && txt.length() > 0) {
+                                        if (out.length() > 0) {
+                                            out += "\n";
+                                        }
+                                        out += txt;
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
         }
+        // Gather prompt feedback/safety blocks if present
+        var pf = (<map<json>>payload)["promptFeedback"] ?: ();
+        if (pf is map<json>) {
+            var br = pf["blockReason"] ?: ();
+            if (br is string) {
+                safetyMsg = "blockReason=" + br;
+            }
+            var sr = pf["safetyRatings"] ?: ();
+            if (sr is json[]) {
+                // include only a compact marker
+                safetyMsg = safetyMsg.length() > 0 ? (safetyMsg + ", safetyRatingsPresent") : "safetyRatingsPresent";
+            }
+        }
     }
     if (out.length() == 0) {
-        return error("LLM returned empty content");
+        string reason = finishReason.length() > 0 ? (" finishReason=" + finishReason) : "";
+        if (safetyMsg.length() > 0) {
+            reason += (reason.length() > 0 ? ", " : " ") + safetyMsg;
+        }
+        return error("LLM returned empty content." + (reason.length() > 0 ? (" Reason:" + reason) : ""));
     }
     // Sanitize potential Markdown code fences/backticks and extract the JSON core
     string cleaned = sanitizeLlmJsonString(out);
@@ -748,6 +803,48 @@ function validateMetadataJson(json data) returns json|error {
     map<json> m = <map<json>>data;
     if (!(m.hasKey("required_variables") && m.hasKey("field_metadata") && m.hasKey("ui_order") && m.hasKey("formulas"))) {
         return error("Invalid metadata: missing required keys");
+    }
+    // Basic formulas validation (non-blocking if empty). If non-empty, ensure structure.
+    var fm = m["formulas"];
+    if (fm is json[] && fm.length() > 0) {
+        int idx = 0;
+        foreach json f in fm {
+            if (!(f is map<json>)) {
+                return error("Invalid formula at index " + idx.toString() + ": not an object");
+            }
+            map<json> fmObj = <map<json>>f;
+            string[] reqKeys = ["id", "name", "expression", "order", "testVectors"];
+            foreach string rk in reqKeys {
+                if (!fmObj.hasKey(rk)) {
+                    return error("Invalid formula '" + (fmObj["id"] is string ? <string>fmObj["id"] : idx.toString()) + "': missing key '" + rk + "'");
+                }
+            }
+            // testVectors must be non-empty array
+            var tv = fmObj["testVectors"];
+            if (!(tv is json[] && tv.length() > 0)) {
+                return error("Invalid formula '" + (fmObj["id"] is string ? <string>fmObj["id"] : idx.toString()) + "': testVectors must be non-empty array");
+            }
+            // Shallow expression sanity: reject clearly dangerous characters (no quotes/braces/semicolons/equals)
+            var exprV = fmObj["expression"];
+            if (exprV is string) {
+                string ex = exprV;
+                boolean has = false;
+                string[] disallowed = [";", "{", "}", "[", "]", "\"", "'", "=", ":", "`", "\\"];
+                foreach string d in disallowed {
+                    int? pos = ex.indexOf(d);
+                    if (pos is int) {
+                        has = true;
+                        break;
+                    }
+                }
+                if (has) {
+                    return error("Invalid formula expression contains disallowed characters (sanity check failed) at index=" + idx.toString());
+                }
+            } else {
+                return error("Invalid formula at index " + idx.toString() + ": expression must be string");
+            }
+            idx += 1;
+        }
     }
     return data;
 }
@@ -933,7 +1030,7 @@ function mergeApprovedMetadataForDocument(string docId, string calcType) returns
         // If no approvals exist, fall back to raw LLM variables/metadata to allow apply-metadata to proceed
         // Ballerina maps don't have size(); approximate emptiness by iterating keys
         boolean hasAnyFieldMeta = false;
-        foreach var _k in fieldMetadata.keys() {
+        foreach var _ in fieldMetadata.keys() {
             hasAnyFieldMeta = true;
             break;
         }
@@ -1005,6 +1102,25 @@ function upsertMetadataIntoEvidenceRule(string docId, string calcType, json meta
             "ui_order": mm.hasKey("ui_order") ? mm["ui_order"] : <json>[],
             "formulas": mm.hasKey("formulas") ? mm["formulas"] : <json>[]
         };
+
+        // Include brackets in rule_data if they exist and are valid
+        if (mm.hasKey("brackets")) {
+            json? bj = mm["brackets"];
+            if (bj is json[] && bj.length() > 0) {
+                // Validate that brackets contain meaningful data
+                boolean hasValidBrackets = false;
+                foreach json it in bj {
+                    map<json> m = it is map<json> ? <map<json>>it : {};
+                    if (m.hasKey("min_income") || m.hasKey("max_income") || m.hasKey("rate_percent") || m.hasKey("rate_fraction")) {
+                        hasValidBrackets = true;
+                        break;
+                    }
+                }
+                if (hasValidBrackets) {
+                    data["brackets"] = bj;
+                }
+            }
+        }
         string dataStr = v:toJsonString(<json>data);
 
         // Build embedding text and generate embedding vector
@@ -1045,11 +1161,177 @@ function upsertMetadataIntoEvidenceRule(string docId, string calcType, json meta
             return error("Failed to insert/update evidence rule: " + insRes.message());
         }
 
-        // Optionally sync bracket rows if provided by LLM metadata
+        // Only sync bracket rows if provided by LLM metadata AND brackets are valid
         if (mm.hasKey("brackets")) {
             json? bj = mm["brackets"];
-            if (bj is json[]) {
-                // Clear existing brackets for this rule first to keep order consistent
+            if (bj is json[] && bj.length() > 0) {
+                // Validate that brackets contain meaningful data before creating database records
+                boolean hasValidBrackets = false;
+                foreach json it in bj {
+                    map<json> m = it is map<json> ? <map<json>>it : {};
+                    if (m.hasKey("min_income") || m.hasKey("max_income") || m.hasKey("rate_percent") || m.hasKey("rate_fraction")) {
+                        hasValidBrackets = true;
+                        break;
+                    }
+                }
+
+                if (hasValidBrackets) {
+                    // Clear existing brackets for this rule first to keep order consistent
+                    var delRes = dbClient->execute(`DELETE FROM tax_brackets WHERE rule_id = ${rid}`);
+                    if (delRes is sql:Error) {
+                        return error("Failed to clear existing tax_brackets: " + delRes.message());
+                    }
+                    int ord = 1;
+                    foreach json it in bj {
+                        map<json> m = it is map<json> ? <map<json>>it : {};
+                        decimal? minI = ();
+                        decimal? maxI = ();
+                        decimal rateFrac = 0.0d;
+                        decimal fixedAmt = 0.0d;
+                        int bOrder = ord;
+                        json? v;
+                        v = m["min_income"];
+                        if (v is decimal) {
+                            minI = v;
+                        } else if (v is int) {
+                            decimal|error t = decimal:fromString((<int>v).toString());
+                            if (t is decimal) {
+                                minI = t;
+                            }
+                        }
+                        v = m["max_income"];
+                        if (v is decimal) {
+                            maxI = v;
+                        } else if (v is int) {
+                            decimal|error t = decimal:fromString((<int>v).toString());
+                            if (t is decimal) {
+                                maxI = t;
+                            }
+                        }
+                        v = m["fixed_amount"];
+                        if (v is decimal) {
+                            fixedAmt = v;
+                        } else if (v is int) {
+                            decimal|error t = decimal:fromString((<int>v).toString());
+                            if (t is decimal) {
+                                fixedAmt = t;
+                            }
+                        }
+                        // Prefer rate_fraction; else derive from rate_percent
+                        v = m["rate_fraction"];
+                        if (v is decimal) {
+                            rateFrac = v;
+                        } else {
+                            json? rp = m["rate_percent"];
+                            if (rp is decimal) {
+                                rateFrac = rp / 100.0d;
+                            }
+                            else if (rp is int) {
+                                decimal|error t = decimal:fromString((<int>rp).toString());
+                                if (t is decimal) {
+                                    rateFrac = t / 100.0d;
+                                }
+                            }
+                        }
+                        json? bo = m["bracket_order"];
+                        if (bo is int) {
+                            bOrder = bo;
+                        }
+
+                        string brId = rid + "_b" + bOrder.toString();
+                        sql:ParameterizedQuery insBr = `
+                        INSERT INTO tax_brackets (
+                            id, rule_id, min_income, max_income, rate, fixed_amount, bracket_order
+                        ) VALUES (
+                            ${brId}, ${rid}, ${minI}, ${maxI}, ${rateFrac}, ${fixedAmt}, ${bOrder}
+                        )
+                        ON CONFLICT (id) DO UPDATE SET
+                            min_income = ${minI},
+                            max_income = ${maxI},
+                            rate = ${rateFrac},
+                            fixed_amount = ${fixedAmt}
+                    `;
+                        var brRes = dbClient->execute(insBr);
+                        if (brRes is sql:Error) {
+                            return error("Failed to upsert tax_brackets (" + brId + "): " + brRes.message());
+                        }
+                        ord += 1;
+                    }
+                }
+            }
+        }
+
+        // Return created id
+        return {"ruleId": rid, "created": true};
+    }
+
+    if (e is error) {
+        return error("Failed to query existing evidence rule: " + e.message());
+    }
+
+    // Evidence rule exists: merge and update
+    map<json> cur = current is map<json> ? <map<json>>current : {};
+    if (mm.hasKey("required_variables")) {
+        cur["required_variables"] = mm["required_variables"];
+    }
+    if (mm.hasKey("field_metadata")) {
+        cur["field_metadata"] = mm["field_metadata"];
+    }
+    if (mm.hasKey("ui_order")) {
+        cur["ui_order"] = mm["ui_order"];
+    }
+    if (mm.hasKey("formulas")) {
+        cur["formulas"] = mm["formulas"];
+    }
+
+    // Include brackets in rule_data if they exist and are valid
+    if (mm.hasKey("brackets")) {
+        json? bj = mm["brackets"];
+        if (bj is json[] && bj.length() > 0) {
+            // Validate that brackets contain meaningful data
+            boolean hasValidBrackets = false;
+            foreach json it in bj {
+                map<json> m = it is map<json> ? <map<json>>it : {};
+                if (m.hasKey("min_income") || m.hasKey("max_income") || m.hasKey("rate_percent") || m.hasKey("rate_fraction")) {
+                    hasValidBrackets = true;
+                    break;
+                }
+            }
+            if (hasValidBrackets) {
+                cur["brackets"] = bj;
+            }
+        }
+    }
+
+    // Add provenance
+    cur["extraction_provenance"] = {
+        "method": "llm_offline_v1",
+        "applied_at": time:utcToCivil(time:utcNow()).year.toString() +
+        "-" + ((time:utcToCivil(time:utcNow()).month < 10 ? "0" : "") + time:utcToCivil(time:utcNow()).month.toString()) +
+        "-" + ((time:utcToCivil(time:utcNow()).day < 10 ? "0" : "") + time:utcToCivil(time:utcNow()).day.toString())
+    };
+
+    string mergedStr = v:toJsonString(<json>cur);
+    var upd = dbClient->execute(`UPDATE tax_rules SET rule_data = ${mergedStr}::jsonb, updated_at = NOW() WHERE id = ${rid}`);
+    if (upd is sql:Error) {
+        return error("Failed to update rule_data: " + upd.message());
+    }
+
+    // Only sync bracket rows if provided by LLM metadata AND brackets are valid
+    if (mm.hasKey("brackets")) {
+        json? bj = mm["brackets"];
+        if (bj is json[] && bj.length() > 0) {
+            // Validate that brackets contain meaningful data before creating database records
+            boolean hasValidBrackets = false;
+            foreach json it in bj {
+                map<json> m = it is map<json> ? <map<json>>it : {};
+                if (m.hasKey("min_income") || m.hasKey("max_income") || m.hasKey("rate_percent") || m.hasKey("rate_fraction")) {
+                    hasValidBrackets = true;
+                    break;
+                }
+            }
+
+            if (hasValidBrackets) {
                 var delRes = dbClient->execute(`DELETE FROM tax_brackets WHERE rule_id = ${rid}`);
                 if (delRes is sql:Error) {
                     return error("Failed to clear existing tax_brackets: " + delRes.message());
@@ -1090,7 +1372,6 @@ function upsertMetadataIntoEvidenceRule(string docId, string calcType, json meta
                             fixedAmt = t;
                         }
                     }
-                    // Prefer rate_fraction; else derive from rate_percent
                     v = m["rate_fraction"];
                     if (v is decimal) {
                         rateFrac = v;
@@ -1113,129 +1394,6 @@ function upsertMetadataIntoEvidenceRule(string docId, string calcType, json meta
 
                     string brId = rid + "_b" + bOrder.toString();
                     sql:ParameterizedQuery insBr = `
-                        INSERT INTO tax_brackets (
-                            id, rule_id, min_income, max_income, rate, fixed_amount, bracket_order
-                        ) VALUES (
-                            ${brId}, ${rid}, ${minI}, ${maxI}, ${rateFrac}, ${fixedAmt}, ${bOrder}
-                        )
-                        ON CONFLICT (id) DO UPDATE SET
-                            min_income = ${minI},
-                            max_income = ${maxI},
-                            rate = ${rateFrac},
-                            fixed_amount = ${fixedAmt}
-                    `;
-                    var brRes = dbClient->execute(insBr);
-                    if (brRes is sql:Error) {
-                        return error("Failed to upsert tax_brackets (" + brId + "): " + brRes.message());
-                    }
-                    ord += 1;
-                }
-            }
-        }
-
-        // Return created id
-        return {"ruleId": rid, "created": true};
-    }
-
-    if (e is error) {
-        return error("Failed to query existing evidence rule: " + e.message());
-    }
-
-    // Evidence rule exists: merge and update
-    map<json> cur = current is map<json> ? <map<json>>current : {};
-    if (mm.hasKey("required_variables")) {
-        cur["required_variables"] = mm["required_variables"];
-    }
-    if (mm.hasKey("field_metadata")) {
-        cur["field_metadata"] = mm["field_metadata"];
-    }
-    if (mm.hasKey("ui_order")) {
-        cur["ui_order"] = mm["ui_order"];
-    }
-    if (mm.hasKey("formulas")) {
-        cur["formulas"] = mm["formulas"];
-    }
-
-    // Add provenance
-    cur["extraction_provenance"] = {
-        "method": "llm_offline_v1",
-        "applied_at": time:utcToCivil(time:utcNow()).year.toString() +
-        "-" + ((time:utcToCivil(time:utcNow()).month < 10 ? "0" : "") + time:utcToCivil(time:utcNow()).month.toString()) +
-        "-" + ((time:utcToCivil(time:utcNow()).day < 10 ? "0" : "") + time:utcToCivil(time:utcNow()).day.toString())
-    };
-
-    string mergedStr = v:toJsonString(<json>cur);
-    var upd = dbClient->execute(`UPDATE tax_rules SET rule_data = ${mergedStr}::jsonb, updated_at = NOW() WHERE id = ${rid}`);
-    if (upd is sql:Error) {
-        return error("Failed to update rule_data: " + upd.message());
-    }
-
-    // Optionally sync bracket rows if provided by LLM metadata
-    if (mm.hasKey("brackets")) {
-        json? bj = mm["brackets"];
-        if (bj is json[]) {
-            var delRes = dbClient->execute(`DELETE FROM tax_brackets WHERE rule_id = ${rid}`);
-            if (delRes is sql:Error) {
-                return error("Failed to clear existing tax_brackets: " + delRes.message());
-            }
-            int ord = 1;
-            foreach json it in bj {
-                map<json> m = it is map<json> ? <map<json>>it : {};
-                decimal? minI = ();
-                decimal? maxI = ();
-                decimal rateFrac = 0.0d;
-                decimal fixedAmt = 0.0d;
-                int bOrder = ord;
-                json? v;
-                v = m["min_income"];
-                if (v is decimal) {
-                    minI = v;
-                } else if (v is int) {
-                    decimal|error t = decimal:fromString((<int>v).toString());
-                    if (t is decimal) {
-                        minI = t;
-                    }
-                }
-                v = m["max_income"];
-                if (v is decimal) {
-                    maxI = v;
-                } else if (v is int) {
-                    decimal|error t = decimal:fromString((<int>v).toString());
-                    if (t is decimal) {
-                        maxI = t;
-                    }
-                }
-                v = m["fixed_amount"];
-                if (v is decimal) {
-                    fixedAmt = v;
-                } else if (v is int) {
-                    decimal|error t = decimal:fromString((<int>v).toString());
-                    if (t is decimal) {
-                        fixedAmt = t;
-                    }
-                }
-                v = m["rate_fraction"];
-                if (v is decimal) {
-                    rateFrac = v;
-                } else {
-                    json? rp = m["rate_percent"];
-                    if (rp is decimal) {
-                        rateFrac = rp / 100.0d;
-                    }
-                    else if (rp is int) {
-                        decimal|error t = decimal:fromString((<int>rp).toString());
-                        if (t is decimal) {
-                            rateFrac = t / 100.0d;
-                        }
-                    }
-                }
-                json? bo = m["bracket_order"];
-                if (bo is int) {
-                    bOrder = bo;
-                }
-
-                string brId = rid + "_b" + bOrder.toString();
-                sql:ParameterizedQuery insBr = `
                     INSERT INTO tax_brackets (
                         id, rule_id, min_income, max_income, rate, fixed_amount, bracket_order
                     ) VALUES (
@@ -1247,15 +1405,16 @@ function upsertMetadataIntoEvidenceRule(string docId, string calcType, json meta
                         rate = ${rateFrac},
                         fixed_amount = ${fixedAmt}
                 `;
-                var brRes = dbClient->execute(insBr);
-                if (brRes is sql:Error) {
-                    return error("Failed to upsert tax_brackets (" + brId + "): " + brRes.message());
+                    var brRes = dbClient->execute(insBr);
+                    if (brRes is sql:Error) {
+                        return error("Failed to upsert tax_brackets (" + brId + "): " + brRes.message());
+                    }
+                    ord += 1;
                 }
-                ord += 1;
             }
         }
-    }
 
-    return {"ruleId": rid, "updated": true};
+        return {"ruleId": rid, "updated": true};
+    }
 }
 

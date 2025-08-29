@@ -59,10 +59,6 @@ http:Client geminiClient = check new ("https://generativelanguage.googleapis.com
     }
 });
 
-// Gemini API configuration
-configurable string GEMINI_API_KEY = "AIzaSyBn6yGwy4qFCftrlcN_OMFKkRX6m_e8ibA";
-const string GEMINI_EMBEDDING_MODEL = "text-embedding-004";
-const int GEMINI_EMBEDDING_DIMENSIONS = 768;
 
 // ============================================================================
 // Supabase Integration (Phase 6)
@@ -92,15 +88,7 @@ postgresql:Client dbClient = check new (
     port = 5432,
     database = "postgres",
     username = "postgres",
-    password = SUPABASE_DB_PASSWORD,
-    connectionPool = {maxOpenConnections: 10},
-    options = {
-        socketTimeout: 30,
-        ssl: {mode: "REQUIRE"},
-        connectTimeout: 30,
-        loginTimeout: 10,
-        keepAliveTcpProbe: true
-    }
+    password = SUPABASE_DB_PASSWORD
 );
 
 # Initialize database connection

@@ -123,9 +123,9 @@ function fetchActiveRules(string calcType, string targetDate) returns record {Ru
     if (rules.length() == 0) {
         return error("No aggregated rules found for " + calcType + " on " + targetDate + ". Run aggregation first.");
     }
-    // Load brackets for the found rules (income_tax only for now)
+    // Load brackets for the found rules (for bracket-based tax types: income_tax, paye, vat)
     map<BracketRow[]> byRule = {};
-    if (calcType == "income_tax") {
+    if (calcType == "income_tax" || calcType == "paye" || calcType == "vat") {
         sql:ParameterizedQuery brq = `
             SELECT b.id, b.rule_id, b.min_income, b.max_income, b.rate, b.fixed_amount, b.bracket_order
             FROM tax_brackets b
@@ -162,15 +162,15 @@ function fetchActiveRules(string calcType, string targetDate) returns record {Ru
 function buildJsonSchema(string calcType, record {RuleRow[] rules; map<BracketRow[]> bracketsByRule;} rulesBundle, string targetDate) returns json|error {
     RuleRow[] rules = rulesBundle.rules;
 
-    // Strict check: for income tax, ensure at least one bracket exists (to keep calculator grounded)
-    if (calcType == "income_tax") {
+    // Strict check: for bracket-based tax types, ensure at least one bracket exists (to keep calculator grounded)
+    if (calcType == "income_tax" || calcType == "paye" || calcType == "vat") {
         int totalBrackets = 0;
         foreach RuleRow r in rules {
             BracketRow[] br = rulesBundle.bracketsByRule[r.id] ?: [];
             totalBrackets += br.length();
         }
         if (totalBrackets == 0) {
-            return error("No tax brackets found for income tax on " + targetDate);
+            return error("No tax brackets found for " + calcType + " on " + targetDate);
         }
     }
 
@@ -557,18 +557,18 @@ function persistAndActivate(string calcType, json schemaData) returns json|error
     string id = calcType + "_v" + nextVersion.toString();
     string dataStr = schemaData.toString();
 
-    // Insert new row (initially not active)
+    // Insert new row (initially not active). Use NULL for is_active to avoid unique(schema_type,is_active) conflicts on 'false'.
     sql:ParameterizedQuery ins = `
-		INSERT INTO form_schemas (id, schema_type, version, schema_data, is_active, created_at)
-		VALUES (${id}, ${calcType}, ${nextVersion}, ${dataStr}::jsonb, false, NOW())
-	`;
+        INSERT INTO form_schemas (id, schema_type, version, schema_data, is_active, created_at)
+        VALUES (${id}, ${calcType}, ${nextVersion}, ${dataStr}::jsonb, NULL, NOW())
+    `;
     var insRes = dbClient->execute(ins);
     if (insRes is sql:Error) {
         return error("Failed to insert schema: " + insRes.message());
     }
 
-    // Deactivate previous actives and activate this one
-    var deact = dbClient->execute(`UPDATE form_schemas SET is_active = false WHERE schema_type = ${calcType} AND is_active = true`);
+    // Deactivate previous actives (set to NULL) and activate this one
+    var deact = dbClient->execute(`UPDATE form_schemas SET is_active = NULL WHERE schema_type = ${calcType} AND is_active = true`);
     if (deact is sql:Error) {
         return error("Failed to deactivate previous active schema: " + deact.message());
     }
