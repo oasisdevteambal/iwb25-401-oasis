@@ -284,6 +284,162 @@ export default function AdminDashboard() {
         </div>
       </div>
 
+      {/* Step-by-Step Guided Workflow */}
+      <div className="card">
+        <h3 className="text-xl font-semibold text-gray-900 mb-6">📋 Step-by-Step Document Processing Guide</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {/* Step 1: Upload */}
+          <div className="relative">
+            <div className="flex items-center justify-center w-12 h-12 bg-blue-100 border-2 border-blue-500 rounded-full mx-auto mb-4">
+              <span className="text-blue-600 font-bold">1</span>
+            </div>
+            <div className="text-center">
+              <h4 className="font-semibold text-gray-900 mb-2">📄 Upload Document</h4>
+              <p className="text-sm text-gray-600 mb-4">
+                Upload tax documents (PDF, DOC, DOCX) for processing. Select the appropriate category.
+              </p>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <div className="text-xs text-blue-700 font-medium mb-2">✅ What to do:</div>
+                <ul className="text-xs text-blue-600 space-y-1">
+                  <li>• Choose file from computer</li>
+                  <li>• Select tax category (Income Tax, PAYE, VAT)</li>
+                  <li>• Click "Upload + Process"</li>
+                  <li>• Wait for confirmation</li>
+                </ul>
+              </div>
+            </div>
+            {/* Connector arrow */}
+            <div className="hidden md:block absolute top-6 left-full w-6 h-0.5 bg-gray-300 transform translate-x-0"></div>
+          </div>
+
+          {/* Step 2: Extract */}
+          <div className="relative">
+            <div className="flex items-center justify-center w-12 h-12 bg-orange-100 border-2 border-orange-500 rounded-full mx-auto mb-4">
+              <span className="text-orange-600 font-bold">2</span>
+            </div>
+            <div className="text-center">
+              <h4 className="font-semibold text-gray-900 mb-2">🔍 Extract Metadata</h4>
+              <p className="text-sm text-gray-600 mb-4">
+                Extract tax rules and metadata from uploaded documents using AI processing.
+              </p>
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                <div className="text-xs text-orange-700 font-medium mb-2">✅ What to do:</div>
+                <ul className="text-xs text-orange-600 space-y-1">
+                  <li>• Note the document ID from upload</li>
+                  <li>• Enter ID in "Document ID" field</li>
+                  <li>• Click "Run Extract"</li>
+                  <li>• Monitor processing status</li>
+                </ul>
+              </div>
+            </div>
+            {/* Connector arrow */}
+            <div className="hidden md:block absolute top-6 left-full w-6 h-0.5 bg-gray-300 transform translate-x-0"></div>
+          </div>
+
+          {/* Step 3: Approve */}
+          <div className="relative">
+            <div className="flex items-center justify-center w-12 h-12 bg-purple-100 border-2 border-purple-500 rounded-full mx-auto mb-4">
+              <span className="text-purple-600 font-bold">3</span>
+            </div>
+            <div className="text-center">
+              <h4 className="font-semibold text-gray-900 mb-2">✅ Review & Approve</h4>
+              <p className="text-sm text-gray-600 mb-4">
+                Review extracted rules and metadata, then approve or modify proposals.
+              </p>
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+                <div className="text-xs text-purple-700 font-medium mb-2">✅ What to do:</div>
+                <ul className="text-xs text-purple-600 space-y-1">
+                  <li>• Open "Proposals Inbox"</li>
+                  <li>• Review extracted rules</li>
+                  <li>• Approve or modify</li>
+                  <li>• Click "Apply Approved"</li>
+                </ul>
+              </div>
+            </div>
+            {/* Connector arrow */}
+            <div className="hidden md:block absolute top-6 left-full w-6 h-0.5 bg-gray-300 transform translate-x-0"></div>
+          </div>
+
+          {/* Step 4: Generate Forms */}
+          <div className="relative">
+            <div className="flex items-center justify-center w-12 h-12 bg-green-100 border-2 border-green-500 rounded-full mx-auto mb-4">
+              <span className="text-green-600 font-bold">4</span>
+            </div>
+            <div className="text-center">
+              <h4 className="font-semibold text-gray-900 mb-2">📋 Generate Forms</h4>
+              <p className="text-sm text-gray-600 mb-4">
+                Aggregate rules and generate dynamic tax forms for end users.
+              </p>
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                <div className="text-xs text-green-700 font-medium mb-2">✅ What to do:</div>
+                <ul className="text-xs text-green-600 space-y-1">
+                  <li>• Select tax type & date</li>
+                  <li>• Click "Aggregate" button</li>
+                  <li>• Click "Generate Schema"</li>
+                  <li>• Forms are now available!</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Process Status Indicators */}
+        <div className="mt-8 border-t pt-6">
+          <h4 className="font-semibold text-gray-900 mb-4">📊 Current Process Status</h4>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                <span className="font-medium text-gray-900">Documents Uploaded</span>
+              </div>
+              <div className="text-2xl font-bold text-blue-600">{stats.totalDocuments}</div>
+              <div className="text-xs text-gray-500">Ready for processing</div>
+            </div>
+            
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
+                <span className="font-medium text-gray-900">Pending Processing</span>
+              </div>
+              <div className="text-2xl font-bold text-orange-600">{stats.pendingProcessing}</div>
+              <div className="text-xs text-gray-500">Awaiting extraction/approval</div>
+            </div>
+            
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                <span className="font-medium text-gray-900">Active Schemas</span>
+              </div>
+              <div className="text-2xl font-bold text-green-600">{stats.activeSchemas}</div>
+              <div className="text-xs text-gray-500">Forms available to users</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Quick Tips */}
+        <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <h5 className="font-semibold text-blue-900 mb-2">💡 Quick Tips for Success</h5>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-blue-700">
+            <div>
+              <strong>📄 Document Upload:</strong>
+              <ul className="mt-1 ml-4 space-y-1">
+                <li>• Use clear, readable documents</li>
+                <li>• Ensure correct tax category selection</li>
+                <li>• Wait for upload confirmation</li>
+              </ul>
+            </div>
+            <div>
+              <strong>🔍 Processing:</strong>
+              <ul className="mt-1 ml-4 space-y-1">
+                <li>• Always review extracted rules</li>
+                <li>• Approve only accurate metadata</li>
+                <li>• Test generated forms before publishing</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Activity Feed */}
         <div className="lg:col-span-2">
@@ -311,103 +467,149 @@ export default function AdminDashboard() {
         <div className="space-y-6">
           {/* Quick Actions */}
           <div className="card">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Quick Actions</h3>
-            <div className="space-y-3">
-              {/* Admin Upload */}
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-700">Upload Document (Admin only)</label>
-                <input type="file" accept=".pdf,.doc,.docx" onChange={onFileChange} className="form-field" />
-                <select className="form-field" value={uploadCategory} onChange={e => setUploadCategory(e.target.value)}>
-                  <option value="income_tax">Income Tax</option>
-                  <option value="paye">PAYE</option>
-                  <option value="vat">VAT</option>
-                </select>
-                <button onClick={uploadDocument} disabled={uploading || !selectedFile} className="btn btn-secondary w-full text-left">
-                  <div className="flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                    </svg>
-                    {uploading ? 'Uploading…' : 'Upload + Process'}
-                  </div>
-                </button>
-                {uploadMsg && <div className="text-xs text-gray-600">{uploadMsg}</div>}
-              </div>
-
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 gap-2">
-                  <select className="form-field" value={schemaType} onChange={e => setSchemaType(e.target.value)}>
-                    <option value="income_tax">Income Tax</option>
-                    <option value="paye">PAYE</option>
-                    <option value="vat">VAT</option>
+            <h3 className="text-lg font-medium text-gray-900 mb-4">⚡ Quick Actions</h3>
+            <div className="space-y-4">
+              {/* Step 1: Admin Upload */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center text-sm font-bold">1</div>
+                  <h4 className="font-semibold text-blue-900">Upload Document</h4>
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">Select Document</label>
+                  <input type="file" accept=".pdf,.doc,.docx" onChange={onFileChange} className="form-field" />
+                  <select className="form-field" value={uploadCategory} onChange={e => setUploadCategory(e.target.value)}>
+                    <option value="income_tax">Income Tax Documents</option>
+                    <option value="paye">PAYE Documents</option>
+                    <option value="vat">VAT Documents</option>
                   </select>
-                  <input type="date" className="form-field" value={targetDate} onChange={e => setTargetDate(e.target.value)} />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button 
-                    onClick={runAggregation}
-                    disabled={loading || preflight.evidenceCount === 0}
-                    className={`btn btn-primary w-full text-left ${preflight.evidenceCount === 0 ? 'opacity-60 cursor-not-allowed' : ''}`}
-                  >
-                    <div className="flex items-center gap-2">
+                  <button onClick={uploadDocument} disabled={uploading || !selectedFile} className="btn btn-primary w-full">
+                    <div className="flex items-center justify-center gap-2">
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                       </svg>
-                      {loading ? 'Aggregating…' : 'Aggregate'}
+                      {uploading ? 'Uploading & Processing...' : 'Upload + Process Document'}
                     </div>
                   </button>
-                  <button 
-                    onClick={runGenerateSchema}
-                    disabled={loading}
-                    className={`btn btn-secondary w-full text-left`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      {loading ? 'Working…' : 'Generate Schema'}
+                  {uploadMsg && (
+                    <div className={`text-sm p-2 rounded ${uploadMsg.includes('failed') ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                      {uploadMsg}
                     </div>
-                  </button>
+                  )}
                 </div>
-                {actionMsg && (<div className="text-xs text-gray-600">{actionMsg}</div>)}
-                {preflight.ok && preflight.evidenceCount === 0 && (
-                  <div className="text-xs text-orange-700 bg-orange-50 border border-orange-200 rounded p-2 mt-2">
-                    No evidence rules found for <b>{schemaType}</b> on <b>{targetDate}</b>. Upload a relevant document first, then aggregate.
-                  </div>
-                )}
               </div>
 
-              {/* Offline LLM steps */}
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-700">Document ID (for metadata workflow)</label>
-                <input className="form-field" placeholder="e.g. 42" value={docId} onChange={e => setDocId(e.target.value)} />
-                <div className="grid grid-cols-2 gap-2">
-                  <button className="btn btn-secondary text-left" disabled={loading || !docId} onClick={runExtractMetadata}>
-                    Run Extract
-                  </button>
-                  <button className="btn btn-secondary text-left" disabled={loading || !docId} onClick={runApplyMetadata}>
-                    Apply Approved
-                  </button>
+              {/* Step 2: Extract Metadata */}
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-6 h-6 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm font-bold">2</div>
+                  <h4 className="font-semibold text-orange-900">Extract & Apply Metadata</h4>
                 </div>
-                <a className="text-xs text-blue-700 underline" href="/admin/proposals" rel="nofollow">Open Proposals Inbox</a>
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">Document ID (from upload step)</label>
+                  <input className="form-field" placeholder="e.g. 42" value={docId} onChange={e => setDocId(e.target.value)} />
+                  <div className="grid grid-cols-2 gap-2">
+                    <button className="btn btn-secondary" disabled={loading || !docId} onClick={runExtractMetadata}>
+                      <div className="flex items-center justify-center gap-1">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        Extract Rules
+                      </div>
+                    </button>
+                    <button className="btn btn-secondary" disabled={loading || !docId} onClick={runApplyMetadata}>
+                      <div className="flex items-center justify-center gap-1">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        Apply Approved
+                      </div>
+                    </button>
+                  </div>
+                  <a className="block text-center text-sm bg-purple-100 text-purple-700 py-2 px-3 rounded border border-purple-200 hover:bg-purple-200 transition-colors" href="/admin/proposals" rel="nofollow">
+                    📋 Open Proposals Inbox for Review
+                  </a>
+                </div>
               </div>
-              
-              <button className="btn btn-secondary w-full text-left">
-                <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                  Clear Cache
+
+              {/* Step 3 & 4: Aggregate & Generate */}
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-6 h-6 bg-green-500 text-white rounded-full flex items-center justify-center text-sm font-bold">3</div>
+                  <h4 className="font-semibold text-green-900">Generate Forms</h4>
                 </div>
-              </button>
-              
-              <button className="btn btn-secondary w-full text-left">
-                <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  Export Data
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <select className="form-field" value={schemaType} onChange={e => setSchemaType(e.target.value)}>
+                      <option value="income_tax">Income Tax</option>
+                      <option value="paye">PAYE</option>
+                      <option value="vat">VAT</option>
+                    </select>
+                    <input type="date" className="form-field" value={targetDate} onChange={e => setTargetDate(e.target.value)} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button 
+                      onClick={runAggregation}
+                      disabled={loading || preflight.evidenceCount === 0}
+                      className={`btn btn-primary ${preflight.evidenceCount === 0 ? 'opacity-60 cursor-not-allowed' : ''}`}
+                    >
+                      <div className="flex items-center justify-center gap-1">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        {loading ? 'Aggregating...' : 'Aggregate'}
+                      </div>
+                    </button>
+                    <button 
+                      onClick={runGenerateSchema}
+                      disabled={loading}
+                      className="btn btn-secondary"
+                    >
+                      <div className="flex items-center justify-center gap-1">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        {loading ? 'Generating...' : 'Generate Schema'}
+                      </div>
+                    </button>
+                  </div>
+                  {actionMsg && (
+                    <div className={`text-sm p-2 rounded ${actionMsg.includes('failed') ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                      {actionMsg}
+                    </div>
+                  )}
+                  {preflight.ok && preflight.evidenceCount === 0 && (
+                    <div className="text-sm text-orange-700 bg-orange-100 border border-orange-200 rounded p-3">
+                      ⚠️ No evidence rules found for <strong>{schemaType}</strong> on <strong>{targetDate}</strong>. 
+                      <br />Please upload and process a relevant document first.
+                    </div>
+                  )}
                 </div>
-              </button>
+              </div>
+
+              {/* System Maintenance */}
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <h4 className="font-semibold text-gray-900 mb-3">🔧 System Maintenance</h4>
+                <div className="space-y-2">
+                  <button className="btn btn-secondary w-full">
+                    <div className="flex items-center justify-center gap-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      Clear System Cache
+                    </div>
+                  </button>
+                  
+                  <button className="btn btn-secondary w-full">
+                    <div className="flex items-center justify-center gap-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      Export System Data
+                    </div>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
