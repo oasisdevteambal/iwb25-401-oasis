@@ -1,80 +1,159 @@
-"use client";
-import { useState } from "react";
+'use client';
+
+import Link from 'next/link';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 export default function HistoryPage() {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [filterType, setFilterType] = useState("all");
-  const [filterStatus, setFilterStatus] = useState("all");
+  // UI state
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [limit, setLimit] = useState(25);
+  const [offset, setOffset] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  // Mock data - in real app this would come from API
-  const submissions = [
-    {
-      id: 1,
-      formName: "Income Tax",
-      formType: "income_tax",
-      submissionDate: "2025-08-12T14:30:00Z",
-      status: "complete",
-      schemaVersion: "v2.1"
-    },
-    {
-      id: 2,
-      formName: "Income Tax",
-      formType: "income_tax", 
-      submissionDate: "2025-08-10T09:15:00Z",
-      status: "draft",
-      schemaVersion: "v2.0"
-    },
-    {
-      id: 3,
-      formName: "PAYE",
-      formType: "paye",
-      submissionDate: "2025-08-08T16:45:00Z", 
-      status: "processing",
-      schemaVersion: "v1.0"
+  // Data state
+  const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const debounceRef = useRef(null);
+
+  // Helpers
+  const buildPublicFileUrl = (filePath) => {
+    const base = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://ohdbwbrutlwikcmpprky.supabase.co';
+    const bucket = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'documents';
+    return `${base}/storage/v1/object/public/${bucket}/${filePath}`;
+  };
+
+  // For public buckets, we can directly use the public URL
+  const getSignedUrl = async (filePath) => buildPublicFileUrl(filePath);
+
+  const fetchDocuments = async ({ q = '', lim = limit, off = offset } = {}) => {
+    setLoading(true);
+    setError('');
+    try {
+      const url = new URL('/api/admin/documents', window.location.origin);
+      if (q) url.searchParams.set('q', q);
+      if (lim) url.searchParams.set('limit', String(lim));
+      if (off) url.searchParams.set('offset', String(off));
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Failed to load: ${res.status} ${txt}`);
+      }
+      const data = await res.json();
+      setItems(Array.isArray(data?.items) ? data.items : []);
+      setTotal(Number(data?.pagination?.total || 0));
+    } catch (e) {
+      setError(e?.message || 'Failed to load documents');
+      setItems([]);
+      setTotal(0);
+    } finally {
+      setLoading(false);
     }
-  ];
+  };
+
+  // Initial load
+  useEffect(() => {
+    fetchDocuments({ q: '', lim: limit, off: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Page/limit changes
+  useEffect(() => {
+    fetchDocuments({ q: searchTerm, lim: limit, off: offset });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offset, limit]);
+
+  // Debounced search
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setOffset(0);
+      fetchDocuments({ q: searchTerm, lim: limit, off: 0 });
+    }, 350);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm]);
 
   const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    if (!dateString) return '—';
+    try {
+      return new Date(dateString).toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return String(dateString);
+    }
   };
 
   const getStatusBadge = (status) => {
     const classes = {
       complete: 'badge-success',
-      draft: 'badge-gray', 
-      processing: 'badge-warning'
+      completed: 'badge-success',
+      draft: 'badge-gray',
+      processing: 'badge-warning',
+      pending: 'badge-warning',
+      failed: 'badge-error',
     };
     return `badge ${classes[status] || 'badge-gray'}`;
   };
 
-  const filteredSubmissions = submissions.filter(submission => {
-    const matchesSearch = submission.formName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         submission.formType.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = filterType === 'all' || submission.formType === filterType;
-    const matchesStatus = filterStatus === 'all' || submission.status === filterStatus;
-    
-    return matchesSearch && matchesType && matchesStatus;
-  });
+  const rows = useMemo(() => {
+    const mapped = items.map((it) => {
+      const processed = !!it?.processed;
+      const status = processed ? it?.status || 'completed' : it?.status || 'processing';
+      return {
+        id: it?.id,
+        filename: it?.filename,
+        uploadDate: it?.upload_date || it?.created_at,
+        status,
+        processed,
+        schemaVersion: it?.document_type || '—',
+        filePath: it?.file_path,
+        contentType: it?.content_type || 'application/octet-stream',
+        rulesCount: Number(it?.rules_count || 0),
+        categories: Array.isArray(it?.rule_categories) ? it.rule_categories : [],
+      };
+    });
+    return filterStatus === 'all'
+      ? mapped
+      : mapped.filter((r) => (r.status || '').toLowerCase() === filterStatus.toLowerCase());
+  }, [items, filterStatus]);
+
+  const pageFrom = total === 0 ? 0 : offset + 1;
+  const pageTo = Math.min(offset + rows.length, total);
+  const canPrev = offset > 0;
+  const canNext = offset + limit < total;
+
+  const onPrev = () => {
+    if (!canPrev) return;
+    setOffset(Math.max(0, offset - limit));
+  };
+  const onNext = () => {
+    if (!canNext) return;
+    setOffset(offset + limit);
+  };
 
   return (
     <div className="bg-gray-50 min-h-screen py-8">
       <div className="mx-auto max-w-6xl px-6">
-        {/* Page Header */}
         <div className="mb-8">
           <nav className="text-sm text-gray-500 mb-2">
-            <a href="/" className="hover:text-blue-600">Home</a> / Form Submission History
+            <Link href="/" className="hover:text-blue-600">
+              Home
+            </Link>{' '}
+            / Document History
           </nav>
-          <h1 className="text-3xl font-bold text-gray-900">Form Submission History</h1>
-          <p className="text-gray-600 mt-2">View and manage your past form submissions</p>
+          <h1 className="text-3xl font-bold text-gray-900">Document History</h1>
+          <p className="text-gray-600 mt-2">View and manage uploaded documents</p>
         </div>
 
-        {/* Search and Filters */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="md:col-span-2">
@@ -85,7 +164,7 @@ export default function HistoryPage() {
                 <input
                   id="search"
                   type="text"
-                  placeholder="Search by form name or type..."
+                  placeholder="Search by filename..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="form-field pl-10"
@@ -97,24 +176,7 @@ export default function HistoryPage() {
                 </div>
               </div>
             </div>
-            
-            <div>
-              <label htmlFor="type-filter" className="block text-sm font-medium text-gray-700 mb-1">
-                Form Type
-              </label>
-              <select
-                id="type-filter"
-                value={filterType}
-                onChange={(e) => setFilterType(e.target.value)}
-                className="form-field"
-              >
-                <option value="all">All Types</option>
-                <option value="income_tax">Income Tax</option>
-                <option value="paye">PAYE</option>
-                <option value="vat">VAT</option>
-              </select>
-            </div>
-            
+
             <div>
               <label htmlFor="status-filter" className="block text-sm font-medium text-gray-700 mb-1">
                 Status
@@ -126,80 +188,98 @@ export default function HistoryPage() {
                 className="form-field"
               >
                 <option value="all">All Statuses</option>
-                <option value="complete">Complete</option>
-                <option value="draft">Draft</option>
+                <option value="completed">Completed</option>
                 <option value="processing">Processing</option>
+                <option value="failed">Failed</option>
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="page-size" className="block text-sm font-medium text-gray-700 mb-1">
+                Page Size
+              </label>
+              <select
+                id="page-size"
+                value={String(limit)}
+                onChange={(e) => {
+                  setLimit(Number(e.target.value));
+                  setOffset(0);
+                }}
+                className="form-field"
+              >
+                {[10, 25, 50, 100].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
         </div>
 
-        {/* History Table */}
-        {filteredSubmissions.length > 0 ? (
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 rounded-md p-3 mb-3 text-sm">{error}</div>
+        )}
+
+        {loading ? (
+          <div className="text-center text-gray-600 py-16">Loading…</div>
+        ) : rows.length > 0 ? (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Form Details
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Date & Time
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Schema Version
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">File</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date & Time</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredSubmissions.map((submission) => (
-                    <tr key={submission.id} className="hover:bg-gray-50 transition-colors">
+                  {rows.map((row) => (
+                    <tr key={row.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-6 py-4">
                         <div>
-                          <div className="font-medium text-gray-900">{submission.formName}</div>
-                          <div className="text-sm text-gray-500">{submission.formType}</div>
+                          <div className="font-medium text-gray-900">{row.filename}</div>
+                          <div className="text-sm text-gray-500">
+                            {row.rulesCount > 0 ? `${row.rulesCount} rule(s)` : 'No rules'}
+                            {Array.isArray(row.categories) && row.categories.length > 0 && (
+                              <span className="ml-2 text-gray-400">· {row.categories.join(', ')}</span>
+                            )}
+                          </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-900">
-                        {formatDate(submission.submissionDate)}
-                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-900">{formatDate(row.uploadDate)}</td>
                       <td className="px-6 py-4">
-                        <span className={getStatusBadge(submission.status)}>
-                          {submission.status}
-                        </span>
+                        <span className={getStatusBadge(row.status)}>{row.status}</span>
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-900">
-                        {submission.schemaVersion}
-                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-900">{row.schemaVersion}</td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
-                          {submission.status === 'complete' && (
+                          {row.processed ? (
                             <>
-                              <button className="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                              <button
+                                onClick={async () => {
+                                  const url = await getSignedUrl(row.filePath);
+                                  window.open(url, '_blank', 'noopener,noreferrer');
+                                }}
+                                className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                              >
                                 View
                               </button>
-                              <button className="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                              <a
+                                href={buildPublicFileUrl(row.filePath)}
+                                download
+                                className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                              >
                                 Download
-                              </button>
+                              </a>
                             </>
-                          )}
-                          {submission.status === 'draft' && (
-                            <a 
-                              href={`/forms/${submission.formType}`}
-                              className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-                            >
-                              Continue
-                            </a>
-                          )}
-                          {submission.status === 'processing' && (
+                          ) : row.status === 'processing' ? (
                             <span className="text-gray-500 text-sm">Processing...</span>
+                          ) : (
+                            <span className="text-gray-500 text-sm">Unavailable</span>
                           )}
                         </div>
                       </td>
@@ -208,42 +288,23 @@ export default function HistoryPage() {
                 </tbody>
               </table>
             </div>
-            
-            {/* Pagination */}
+
             <div className="bg-white px-6 py-3 border-t border-gray-200 flex items-center justify-between">
               <div className="text-sm text-gray-700">
-                Showing <span className="font-medium">1</span> to <span className="font-medium">{filteredSubmissions.length}</span> of{' '}
-                <span className="font-medium">{submissions.length}</span> results
+                Showing <span className="font-medium">{pageFrom}</span> to <span className="font-medium">{pageTo}</span> of <span className="font-medium">{total}</span> results
               </div>
               <div className="flex items-center gap-2">
-                <button className="btn btn-secondary text-sm" disabled>
+                <button className="btn btn-secondary text-sm" disabled={!canPrev} onClick={onPrev}>
                   Previous
                 </button>
-                <span className="px-3 py-1 bg-blue-500 text-white text-sm rounded">1</span>
-                <button className="btn btn-secondary text-sm" disabled>
+                <span className="px-3 py-1 bg-blue-500 text-white text-sm rounded">{Math.max(1, Math.floor(offset / limit) + 1)}</span>
+                <button className="btn btn-secondary text-sm" disabled={!canNext} onClick={onNext}>
                   Next
                 </button>
               </div>
             </div>
           </div>
-        ) : submissions.length === 0 ? (
-          /* Empty State - No submissions */
-          <div className="text-center py-16">
-            <div className="mx-auto w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-6">
-              <svg className="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-              </svg>
-            </div>
-            <h3 className="text-xl font-medium text-gray-900 mb-2">No submissions yet</h3>
-            <p className="text-gray-600 mb-6">
-              You haven't submitted any forms yet. Start by creating your first form.
-            </p>
-            <a href="/forms" className="btn btn-primary">
-              Start New Form
-            </a>
-          </div>
         ) : (
-          /* Empty State - No search results */
           <div className="text-center py-16">
             <div className="mx-auto w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-6">
               <svg className="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -251,19 +312,22 @@ export default function HistoryPage() {
               </svg>
             </div>
             <h3 className="text-xl font-medium text-gray-900 mb-2">No results found</h3>
-            <p className="text-gray-600 mb-6">
-              Try adjusting your search terms or filters.
-            </p>
-            <button 
+            <p className="text-gray-600 mb-6">Try adjusting your search terms or filters.</p>
+            <button
               onClick={() => {
-                setSearchTerm("");
-                setFilterType("all");
-                setFilterStatus("all");
+                setSearchTerm('');
+                setFilterStatus('all');
+                setOffset(0);
               }}
               className="btn btn-secondary"
             >
               Clear Filters
             </button>
+            <div className="mt-4">
+              <Link href="/upload" className="btn btn-primary">
+                Upload a document
+              </Link>
+            </div>
           </div>
         )}
       </div>

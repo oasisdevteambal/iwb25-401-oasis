@@ -292,10 +292,6 @@ function detectIntentWithLLM(string question, string conversationContext) return
         userPrompt += " Context: " + conversationContext;
     }
 
-    // Debug: Log the prompt being sent
-    log:printInfo("[intent-llm] System prompt: " + systemPrompt);
-    log:printInfo("[intent-llm] User prompt: " + userPrompt);
-
     json body = {
         "contents": [
             {"role": "user", "parts": [{"text": systemPrompt + "\n\n" + userPrompt}]}
@@ -322,9 +318,6 @@ function detectIntentWithLLM(string question, string conversationContext) return
         log:printWarn("[intent-llm] LLM response parse failed, falling back to rule-based: " + payload.message());
         return detectIntent(question);
     }
-
-    // Debug: Log the full LLM response
-    log:printInfo("[intent-llm] Full LLM response: " + payload.toString());
 
     // Extract intent from LLM response
     string detectedIntent = "";
