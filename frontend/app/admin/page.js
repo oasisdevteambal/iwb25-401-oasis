@@ -51,14 +51,17 @@ export default function AdminDashboard() {
     return icons[type] || icons.document_uploaded;
   };
 
-  const [schemaType, setSchemaType] = useState('income_tax');
+  const [schemaType, setSchemaType] = useState('paye');
   const [targetDate, setTargetDate] = useState(() => new Date().toISOString().slice(0,10));
+  // Step 2 specific state variables
+  const [extractSchemaType, setExtractSchemaType] = useState('paye');
+  const [extractDate, setExtractDate] = useState(() => new Date().toISOString().slice(0,10));
   const [actionMsg, setActionMsg] = useState('');
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
-  const [uploadCategory, setUploadCategory] = useState('income_tax');
+  const [uploadCategory, setUploadCategory] = useState('paye');
   const [docId, setDocId] = useState('');
   const [preflight, setPreflight] = useState({ ok: true, evidenceCount: 0, aggregatedExists: false });
   useEffect(() => {
@@ -151,7 +154,7 @@ export default function AdminDashboard() {
     try {
       const res = await fetch('/api/admin/extract-metadata', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ docId, schemaType })
+        body: JSON.stringify({ docId, schemaType: extractSchemaType })
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) setActionMsg('Extraction batch created'); else setActionMsg(data?.error || 'Extraction failed');
@@ -166,7 +169,7 @@ export default function AdminDashboard() {
     try {
       const res = await fetch('/api/admin/apply-metadata', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ docId, schemaType })
+        body: JSON.stringify({ docId, schemaType: extractSchemaType })
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) setActionMsg('Metadata applied to evidence rules'); else setActionMsg(data?.error || 'Apply failed');
@@ -506,6 +509,20 @@ export default function AdminDashboard() {
                   <h4 className="font-semibold text-orange-900">Extract & Apply Metadata</h4>
                 </div>
                 <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Tax Type</label>
+                      <select className="form-field" value={extractSchemaType} onChange={e => setExtractSchemaType(e.target.value)}>
+                        <option value="income_tax">Income Tax</option>
+                        <option value="paye">PAYE</option>
+                        <option value="vat">VAT</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Processing Date</label>
+                      <input type="date" className="form-field" value={extractDate} onChange={e => setExtractDate(e.target.value)} />
+                    </div>
+                  </div>
                   <label className="block text-sm font-medium text-gray-700">Document ID (from upload step)</label>
                   <input className="form-field" placeholder="e.g. 42" value={docId} onChange={e => setDocId(e.target.value)} />
                   <div className="grid grid-cols-2 gap-2">
