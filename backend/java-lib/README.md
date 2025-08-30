@@ -1,10 +1,15 @@
-# Comprehensive Document Extractor Library
+# Custom Document Extractor Library for Ballerina
 
-A professional Java library for extracting text and metadata from multiple document formats using Apache Tika, optimized for Sri Lankan tax document analysis.
+A specialized Java library designed for seamless integration with **Ballerina** applications, providing comprehensive document text extraction using Apache Tika 2.9.1, specifically optimized for Sri Lankan tax document processing.
+
+## 🎯 Purpose & Ballerina Integration
+
+This library is purpose-built as a **custom Java interop library** for Ballerina applications, showcasing the power of Ballerina's Java interoperability capabilities. It demonstrates how to create specialized Java libraries that integrate seamlessly with Ballerina's type system and error handling.
 
 ## Features
 
 ### Core Capabilities
+- **Ballerina-Optimized**: Designed specifically for Ballerina Java interop with `InteropBridge`
 - **Unified Processing**: Uses Apache Tika 2.9.1 for comprehensive document extraction across multiple formats
 - **Multi-Format Support**: PDF, Word (.doc/.docx), Excel (.xls/.xlsx), PowerPoint, and other formats
 - **Advanced Metadata**: Extracts comprehensive document metadata including author, creation date, language detection
@@ -13,6 +18,12 @@ A professional Java library for extracting text and metadata from multiple docum
 - **Image Detection**: Identifies and catalogs embedded images and graphics
 - **Language Detection**: Automatic language detection for multilingual documents
 - **Tax Document Analysis**: Specialized processing for Sri Lankan tax documents
+
+### Ballerina Integration Features
+- **InteropBridge**: Dedicated bridge class for seamless Ballerina-Java communication
+- **Type Safety**: Java types designed to work with Ballerina's type system
+- **Error Handling**: Proper exception handling that integrates with Ballerina error handling
+- **Memory Efficiency**: Optimized for Ballerina's memory management
 
 ### Sri Lankan Tax Optimization
 - **Document Type Detection**: Automatic identification of Income Tax, VAT, PAYE, WHT, NBT, SSCL documents
@@ -24,6 +35,12 @@ A professional Java library for extracting text and metadata from multiple docum
 
 ### Core Classes
 
+#### InteropBridge (Ballerina Integration Layer)
+- **Primary interface for Ballerina applications**
+- Provides type-safe method signatures for Ballerina Java interop
+- Handles object conversion between Ballerina and Java types
+- Methods: `extractContentFromBytes()`, `isSupportedFormatString()`
+
 #### TikaDocumentExtractor
 - Main extraction engine using Apache Tika
 - Handles all document formats through unified API
@@ -31,9 +48,13 @@ A professional Java library for extracting text and metadata from multiple docum
 
 #### UnifiedDocumentExtractor
 - High-level interface for document processing
-- Provides format-specific optimizations
+- Provides format-specific optimizations (`extractFromPDF`, `extractFromWord`, `extractFromExcel`)
 - Includes Sri Lankan tax document enhancements
 - Critical application mode with explicit error handling
+
+#### Format-Specific Extractors
+- **PDFTextExtractor**: PDF-focused extraction (delegates to TikaDocumentExtractor)
+- **WordTextExtractor**: Word document extraction (delegates to TikaDocumentExtractor)
 
 #### Data Models
 - **DocumentExtractionResult**: Comprehensive extraction results
@@ -96,7 +117,7 @@ copy target\document-extractor-optimized.jar ..\libs\document-extractor.jar
 
 2. Update your `Ballerina.toml`:
 ```toml
-[[platform.java17.dependency]]
+[[platform.java21.dependency]]
 path = "./libs/document-extractor.jar"
 ```
 
@@ -104,47 +125,54 @@ path = "./libs/document-extractor.jar"
 ```ballerina
 import ballerina/jballerina.java;
 
-// Unified document extraction (recommended)
-public function extractDocumentContent(byte[] documentData, string fileName) 
+// Primary extraction method using InteropBridge (recommended)
+function extractDocumentContent(byte[] documentData, string fileName) 
     returns handle|error = @java:Method {
-    'class: "com.oasis.document.extractor.UnifiedDocumentExtractor",
-    name: "extractContent"
+    'class: "com.oasis.document.extractor.InteropBridge",
+    name: "extractContentFromBytes"
 } external;
 
-// PDF-specific extraction
-public function extractPDFText(byte[] pdfData, string fileName) 
-    returns handle|error = @java:Method {
-    'class: "com.oasis.document.extractor.PDFTextExtractor",
-    name: "extractText"
-} external;
-
-// Word-specific extraction  
-public function extractWordText(byte[] wordData, string fileName) 
-    returns handle|error = @java:Method {
-    'class: "com.oasis.document.extractor.WordTextExtractor", 
-    name: "extractText"
+// Check if format is supported
+function isSupportedFormat(string fileName) 
+    returns boolean = @java:Method {
+    'class: "com.oasis.document.extractor.InteropBridge",
+    name: "isSupportedFormatString"
 } external;
 
 // Access extraction result data
-public function getExtractedText(handle result) returns string = @java:Method {
+function getExtractedText(handle result) returns string = @java:Method {
     'class: "com.oasis.document.extractor.DocumentExtractionResult",
     name: "getExtractedText"
 } external;
 
-public function getContentType(handle result) returns string = @java:Method {
+function getContentType(handle result) returns string = @java:Method {
     'class: "com.oasis.document.extractor.DocumentExtractionResult",
     name: "getContentType"
 } external;
 
-public function getDetectedLanguages(handle result) returns string[] = @java:Method {
+function getDetectedLanguages(handle result) returns handle = @java:Method {
     'class: "com.oasis.document.extractor.DocumentExtractionResult",
     name: "getDetectedLanguages"
+} external;
+
+function isExtractionSuccessful(handle result) returns boolean = @java:Method {
+    'class: "com.oasis.document.extractor.DocumentExtractionResult", 
+    name: "isExtractionSuccessful"
 } external;
 ```
 
 ## API Reference
 
-### UnifiedDocumentExtractor (Recommended)
+### InteropBridge (Primary Ballerina Interface)
+
+#### Methods
+- `extractContentFromBytes(byte[] documentData, String fileName)` - Main extraction method optimized for Ballerina
+- `isSupportedFormatString(String fileName)` - Check if format is supported (Ballerina-friendly)
+- `extractContent(Object documentData, Object fileName)` - Legacy method with Object parameters
+- `extractFromPDF(Object pdfData, Object fileName)` - PDF-specific extraction (legacy)
+- `extractFromWord(Object wordData, Object fileName)` - Word-specific extraction (legacy)
+
+### UnifiedDocumentExtractor (Core Engine)
 
 #### Methods
 - `extractContent(byte[] documentContent, String fileName)` - Universal document extraction
@@ -158,6 +186,16 @@ public function getDetectedLanguages(handle result) returns string[] = @java:Met
 
 #### Methods
 - `extractContent(byte[] documentContent, String fileName)` - Core Tika-based extraction
+
+### Format-Specific Extractors
+
+#### PDFTextExtractor
+- `extractText(byte[] pdfData)` - Extract from PDF with default filename
+- `extractText(byte[] pdfData, String fileName)` - Extract from PDF with custom filename
+
+#### WordTextExtractor  
+- `extractText(byte[] wordData)` - Extract from Word with default filename
+- `extractText(byte[] wordData, String fileName)` - Extract from Word with custom filename
 
 ### DocumentExtractionResult
 
@@ -244,15 +282,18 @@ if (result.isExtractionSuccessful()) {
 ```
 
 ```ballerina
-// Ballerina usage
+// Ballerina usage with InteropBridge (recommended)
 byte[] documentContent = check io:fileReadBytes("tax-document.pdf");
 handle result = check extractDocumentContent(documentContent, "tax-document.pdf");
 
-string extractedText = getExtractedText(result);
-string contentType = getContentType(result);
-string[] languages = getDetectedLanguages(result);
+if (isExtractionSuccessful(result)) {
+    string extractedText = getExtractedText(result);
+    string contentType = getContentType(result);
 
-log:printInfo(string `Extracted ${extractedText.length()} characters from ${contentType} document`);
+    log:printInfo(string `Extracted ${extractedText.length()} characters from ${contentType} document`);
+} else {
+    log:printError("Document extraction failed");
+}
 ```
 
 ### Sri Lankan Tax Document Processing
@@ -315,15 +356,18 @@ java-lib/
 ├── pom.xml
 ├── src/
 │   ├── main/java/com/oasis/document/extractor/
+│   │   ├── InteropBridge.java                  # Ballerina integration bridge
 │   │   ├── TikaDocumentExtractor.java         # Core Tika engine
 │   │   ├── UnifiedDocumentExtractor.java      # High-level interface
-│   │   ├── PDFTextExtractor.java              # PDF wrapper
-│   │   ├── WordTextExtractor.java             # Word wrapper
+│   │   ├── PDFTextExtractor.java              # PDF-specific wrapper
+│   │   ├── WordTextExtractor.java             # Word-specific wrapper
 │   │   ├── DocumentExtractionResult.java      # Result model
 │   │   ├── DocumentStructure.java             # Structure model
 │   │   ├── TikaExtractionInfo.java            # Extraction metadata
 │   │   ├── TableData.java                     # Table model
-│   │   └── ImageData.java                     # Image model
+│   │   ├── TableInfo.java                     # Table information
+│   │   ├── ImageData.java                     # Image model
+│   │   └── WordExtractionResult.java          # Word-specific result
 │   └── test/java/com/oasis/document/extractor/
 │       └── DocumentExtractorTest.java
 └── target/
@@ -331,17 +375,24 @@ java-lib/
     └── document-extractor-optimized.jar       # With dependencies
 ```
 
-## Benefits of Apache Tika Approach
+## Benefits of This Ballerina-Java Integration
 
-### Advantages over PDFBox + POI
-1. **Unified API**: Single interface for all document formats
-2. **Better Metadata**: Comprehensive document metadata extraction
-3. **Language Detection**: Automatic language identification
+### Advantages for Ballerina Applications
+1. **Seamless Interop**: Custom InteropBridge designed specifically for Ballerina type system
+2. **Type Safety**: Java types that map cleanly to Ballerina types
+3. **Error Handling**: Proper exception handling that integrates with Ballerina's error model
+4. **Performance**: Direct byte array processing without unnecessary conversions
+5. **Maintainability**: Single JAR dependency with all required libraries included
+
+### Technical Benefits
+1. **Unified API**: Single interface for all document formats through Apache Tika
+2. **Better Metadata**: Comprehensive document metadata extraction  
+3. **Language Detection**: Automatic language identification for multilingual documents
 4. **Format Detection**: Automatic file type detection
 5. **Structure Analysis**: Better document structure recognition
 6. **Table Extraction**: Enhanced table detection and extraction
-7. **Extensibility**: Easy to add new format support
-8. **Maintenance**: Single dependency instead of multiple libraries
+7. **Extensibility**: Easy to add new format support through Tika
+8. **Maintenance**: Single dependency instead of multiple format-specific libraries
 
 ### Sri Lankan Tax Document Optimization
 1. **Multilingual Support**: Handles English and Sinhala documents
@@ -350,10 +401,4 @@ java-lib/
 4. **Metadata Enhancement**: Adds tax-specific metadata
 5. **Critical Application Mode**: Explicit error handling without fallbacks for maximum accuracy
 
-### Performance Benefits
-1. **Memory Efficiency**: Optimized for large document processing
-2. **Stream Processing**: Supports streaming for large files
-3. **Parallel Processing**: Thread-safe for concurrent extraction
-4. **Caching**: Built-in parser caching for repeated operations
-
-This comprehensive approach provides superior document processing capabilities specifically optimized for Sri Lankan tax document analysis while maintaining compatibility with the existing Ballerina integration.
+This comprehensive approach provides superior document processing capabilities specifically optimized for Ballerina applications processing Sri Lankan tax documents while showcasing the powerful Java interoperability features of the Ballerina language.

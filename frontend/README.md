@@ -1,36 +1,79 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# Sri Lankan Tax Application - Frontend
 
-## Getting Started
+This is the frontend for the Sri Lankan Tax Calculation Application, built with [Next.js 15](https://nextjs.org) and [React 19](https://react.dev).
 
-First, run the development server:
+## 🚀 Getting Started
 
+### Prerequisites
+- Node.js (v18 or higher)
+- npm or yarn
+
+### Installation
+
+1. **Install dependencies**:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. **Set up environment variables**:
+```bash
+cp .env.example .env.local
+```
+Edit `.env.local` with your configuration:
+```env
+NEXT_PUBLIC_API_URL=http://localhost:5000
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+3. **Run the development server**:
+```bash
+npm run dev
+```
+*Note: Uses Turbopack for faster development builds*
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+4. **Open your browser**:
+Visit [http://localhost:3000](http://localhost:3000) to see the application.
 
-## Learn More
+## 🛠️ Technology Stack
 
-To learn more about Next.js, take a look at the following resources:
+- **Next.js 15** - React framework with App Router
+- **React 19** - Latest React version  
+- **Tailwind CSS v4** - Utility-first CSS framework
+- **TypeScript** - Type safety (configured)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 📁 Project Structure
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+frontend/
+├── app/                    # Next.js App Router
+│   ├── admin/             # Admin dashboard pages
+│   ├── api/               # API routes
+│   ├── chat/              # Chat interface
+│   ├── forms/             # Dynamic tax forms
+│   └── upload/            # Document upload
+├── components/            # React components
+│   ├── ChatInterface.jsx # AI chat widget
+│   ├── FormRenderer.jsx  # Dynamic form renderer
+│   └── ...
+├── lib/                   # Utility functions
+└── public/               # Static assets
+```
 
-## Deploy on Vercel
+## 🧪 Available Scripts
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `npm run dev` - Start development server with Turbopack
+- `npm run build` - Build for production
+- `npm run start` - Start production server
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 🎨 Features
+
+- **Dynamic Tax Forms** - Generated from AI-extracted rules
+- **Real-time Chat** - AI-powered tax assistant
+- **Responsive Design** - Mobile-first approach
+- **Fast Development** - Turbopack for instant updates
+- **Modern Typography** - Geist font family optimization
+
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a modern font family for better readability.
+
+

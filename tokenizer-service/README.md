@@ -1,15 +1,15 @@
-# Gemini 1.5 Flash Tokenizer Service
+# TikToken Tokenizer Service
 
-A fast and accurate Node.js microservice for text tokenization using **Gemini 1.5 Flash** API with tiktoken fallback.
+A fast and reliable Node.js microservice for text tokenization using **tiktoken cl100k_base** encoding for accurate token counting.
 
 ## Features
 
-- ✅ **Accurate Tokenization** - Uses Gemini 1.5 Flash API for exact token counting
-- ✅ **Smart Fallback** - tiktoken estimation when Gemini API is unavailable
+- ✅ **Fast Tokenization** - Uses tiktoken cl100k_base encoding for instant token counting
+- ✅ **No API Dependencies** - Completely local processing, no external API calls
 - ✅ **Batch Processing** - Tokenize multiple texts efficiently
 - ✅ **Chunk Analysis** - Analyze if text chunks fit within token limits
-- ✅ **High Performance** - Optimized for tax document processing
-- ✅ **Rate Limit Aware** - Respects Gemini's 15 req/min free tier limits
+- ✅ **High Performance** - Optimized for tax document processing with no rate limits
+- ✅ **GPT-4 Compatible** - Uses cl100k_base encoding (same as GPT-4, GPT-3.5-turbo)
 - ✅ **Security** - Helmet, CORS, and compression middleware
 
 ## Quick Start
@@ -19,21 +19,17 @@ A fast and accurate Node.js microservice for text tokenization using **Gemini 1.
 npm install
 ```
 
-### 2. Setup Environment
+### 2. Setup Environment (Optional)
 ```bash
-# Copy environment template
+# Copy environment template (optional - service works without env vars)
 cp .env.example .env
 
-# Edit .env and add your Gemini API key
-GEMINI_API_KEY=your-actual-api-key-here
+# Edit .env for custom configuration
+PORT=3001
+NODE_ENV=development
 ```
 
-### 3. Get Gemini API Key
-1. Visit [Google AI Studio](https://makersuite.google.com/app/apikey)
-2. Create a new API key
-3. Copy it to your `.env` file
-
-### 4. Start the Service
+### 3. Start the Service
 ```bash
 # Development mode with auto-reload
 npm run dev
@@ -56,7 +52,7 @@ Returns service status and configuration info.
 ```
 GET /model
 ```
-Returns Gemini 1.5 Flash model details and features.
+Returns tiktoken cl100k_base encoding details and features.
 
 ### Single Text Tokenization
 ```
@@ -64,28 +60,20 @@ POST /tokenize
 Content-Type: application/json
 
 {
-  "text": "Income tax rates in Sri Lanka are progressive, ranging from 6% to 36%.",
-  "method": "auto",
-  "includeFallback": true
+  "text": "Income tax rates in Sri Lanka are progressive, ranging from 6% to 36%."
 }
 ```
-
-**Methods:**
-- `"auto"` - Try Gemini API first, fallback to tiktoken (default)
-- `"gemini"` - Use Gemini API only
-- `"estimation"` - Use tiktoken estimation only
 
 **Response:**
 ```json
 {
   "tokenCount": 18,
-  "model": "gemini-1.5-flash",
-  "methodUsed": "gemini-api",
+  "encoding": "cl100k_base",
   "success": true,
   "statistics": {
     "characterCount": 78,
     "averageCharsPerToken": 4.33,
-    "processingTimeMs": 245
+    "processingTimeMs": 2
   },
   "metadata": {
     "timestamp": "2025-01-09T10:00:00.000Z",
@@ -104,8 +92,7 @@ Content-Type: application/json
     "First tax document chunk",
     "Second tax document chunk",
     "Third tax document chunk"
-  ],
-  "method": "auto"
+  ]
 }
 ```
 
@@ -116,14 +103,13 @@ Content-Type: application/json
 
 {
   "chunks": ["Chunk 1 text", "Chunk 2 text"],
-  "maxTokens": 1000,
-  "method": "auto"
+  "maxTokens": 1000
 }
 ```
 
 ## Integration with Ballerina
 
-Update your Ballerina service to use the new Gemini tokenizer:
+Update your Ballerina service to use the tiktoken tokenizer:
 
 ```ballerina
 // In your document_service.bal
@@ -131,8 +117,7 @@ http:Client tokenizerClient = check new("http://localhost:3001");
 
 function getAccurateTokenCount(string text) returns int|error {
     json payload = {
-        "text": text,
-        "method": "auto"  // Try Gemini API first, fallback to estimation
+        "text": text
     };
     
     http:Response response = check tokenizerClient->post("/tokenize", payload);
@@ -149,8 +134,7 @@ function getAccurateTokenCount(string text) returns int|error {
 function analyzeChunks(string[] chunks) returns json|error {
     json payload = {
         "chunks": chunks,
-        "maxTokens": 1000,
-        "method": "auto"
+        "maxTokens": 1000
     };
     
     http:Response response = check tokenizerClient->post("/analyze-chunks", payload);
@@ -158,47 +142,36 @@ function analyzeChunks(string[] chunks) returns json|error {
 }
 ```
 
-## Gemini 1.5 Flash Benefits
+## TikToken cl100k_base Benefits
 
-- **Accuracy**: Exact tokenization matching Gemini's processing
-- **Context Window**: 1M tokens (perfect for entire tax documents)
-- **Rate Limits**: 15 requests/minute (sufficient for document processing)
-- **Cost**: Free tier available
-- **Speed**: Optimized for fast processing
+- **Speed**: Lightning-fast local processing (~1-5ms per request)
+- **Reliability**: No network dependencies or API failures
+- **Compatibility**: Uses cl100k_base encoding (same as GPT-4, GPT-3.5-turbo)
+- **Accuracy**: Precise token counting for modern language models
+- **No Rate Limits**: Process unlimited text without restrictions
+- **Cost**: Completely free - no API costs
 
-## Error Handling & Fallback
+## Performance & Reliability
 
-The service automatically handles Gemini API issues:
+The service provides consistent, fast performance:
 
-1. **API Key Missing**: Falls back to tiktoken estimation
-2. **Rate Limit Hit**: Falls back to tiktoken estimation
-3. **Network Issues**: Falls back to tiktoken estimation
-4. **Service Down**: Falls back to tiktoken estimation
-
-Example with fallback:
-```json
-{
-  "tokenCount": 18,
-  "model": "gemini-1.5-flash",
-  "methodUsed": "tiktoken-estimation",
-  "fallbackReason": "Rate limit exceeded",
-  "warning": "Used tiktoken estimation due to Gemini API unavailability",
-  "success": true
-}
-```
+- **No External Dependencies**: Pure local processing
+- **No Rate Limits**: Unlimited tokenization capacity
+- **No Network Issues**: Always available when service is running
+- **Consistent Results**: Same input always produces same output
 
 ## Performance
 
-- **Gemini API**: ~200-500ms per request (network dependent)
-- **tiktoken**: ~1-5ms per text (local processing)
+- **Local Processing**: ~1-5ms per text (no network latency)
 - **Batch Processing**: Optimized for multiple texts
-- **Memory**: Efficient with proper cleanup
+- **Memory Efficient**: Proper cleanup and resource management
+- **High Throughput**: No rate limits or API restrictions
 
 ## Environment Variables
 
-- `GEMINI_API_KEY`: Your Gemini API key (required for accurate counting)
 - `PORT`: Service port (default: 3001)
 - `NODE_ENV`: Environment (development/production)
+- `MAX_BATCH_SIZE`: Maximum texts in batch request (default: 100)
 
 ## Testing
 
@@ -215,39 +188,21 @@ curl http://localhost:3001/health
 curl http://localhost:3001/model
 ```
 
-## Rate Limits & Best Practices
-
-**Gemini 1.5 Flash Free Tier:**
-- 15 requests per minute
-- 1M tokens per minute
-- Use batch endpoints for multiple texts
-- Automatic fallback prevents service interruption
+## Best Practices
 
 **Recommendations:**
-- Use `method: "auto"` for reliability
-- Batch similar-sized texts together
-- Monitor the `methodUsed` field in responses
-- Set up monitoring for API key usage
+- Use batch endpoints for multiple texts to improve performance
+- Monitor processing times for performance optimization
+- Set appropriate `MAX_BATCH_SIZE` for your use case
+- Use compression for large text payloads
 
-## Deployment
-
-### Docker
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-EXPOSE 3001
-CMD ["npm", "start"]
-```
 
 ### Environment Setup
 ```bash
 # Production environment
 NODE_ENV=production
-GEMINI_API_KEY=your-production-api-key
 PORT=3001
+MAX_BATCH_SIZE=100
 ```
 
-This service provides the perfect balance of accuracy (Gemini API) and reliability (tiktoken fallback) for your tax document processing needs!
+This service provides fast, reliable, and cost-free token counting using tiktoken cl100k_base encoding - perfect for your tax document processing needs!
