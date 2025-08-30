@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
 import LoadingIndicator from './LoadingIndicator';
-import SchemaSelector from './SchemaSelector';
+import SchemaSelector from './SchemaSelector_fixed';
 import BackendStatus from './BackendStatus';
 import { getConversationMemory, resetConversationMemory } from '../lib/conversationMemory';
 

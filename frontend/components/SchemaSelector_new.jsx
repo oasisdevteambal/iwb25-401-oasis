@@ -61,7 +61,7 @@ export default function SchemaSelector({ selectedSchema, onSchemaChange, targetD
             {/* Visual Indicators */}
             {!compact && (
                 <div className="flex items-end">
-                    <div className="flex space-x-2 pb-2">
+                    <div className="flex flex-col space-y-1">
                         {selectedSchema && (
                             <div className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 animate-fadeIn">
                                 <span className="w-2 h-2 bg-blue-600 rounded-full mr-1"></span>
@@ -76,8 +76,7 @@ export default function SchemaSelector({ selectedSchema, onSchemaChange, targetD
                         )}
                     </div>
                 </div>
-                )
-            }
+            )}
         </div>
     );
 }

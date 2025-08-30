@@ -13,7 +13,21 @@
 
 export class ConversationMemory {
     constructor(sessionId = null) {
-        this.sessionId = sessionId || this.generateSessionId();
+        // Maintain a stable session id per browser tab so history survives navigations
+        const SESSION_ID_KEY = 'chat_session_id';
+        let stableId = sessionId;
+        try {
+            if (!stableId) {
+                const existing = sessionStorage.getItem(SESSION_ID_KEY);
+                stableId = existing || this.generateSessionId();
+                // Store for subsequent reloads/navigations in this tab
+                sessionStorage.setItem(SESSION_ID_KEY, stableId);
+            }
+        } catch (e) {
+            // Fallback if sessionStorage is unavailable
+            stableId = stableId || this.generateSessionId();
+        }
+        this.sessionId = stableId;
         this.storageKey = `chat_history_${this.sessionId}`;
         this.maxMessages = 20; // Keep last 20 messages for context
         this.maxContextMessages = 5; // Send last 5 messages as context
@@ -181,9 +195,13 @@ export function getConversationMemory() {
 }
 
 export function resetConversationMemory() {
+    // Clear history but keep the same session id so future messages continue the same tab session
     if (conversationMemory) {
+        const currentId = conversationMemory.sessionId;
         conversationMemory.clearHistory();
+        conversationMemory = new ConversationMemory(currentId);
+    } else {
+        conversationMemory = new ConversationMemory();
     }
-    conversationMemory = new ConversationMemory();
     return conversationMemory;
 }

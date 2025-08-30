@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import MarkdownRenderer from './MarkdownRenderer';
 
-export default function ChatMessage({ message }) {
+export default function ChatMessage({ message, compact = false }) {
     // Auto-expand evidence for formula and rates_brackets intents
     const shouldAutoExpand = message.intent === 'formulas' || message.intent === 'rates_brackets';
     const [isExpanded, setIsExpanded] = useState(shouldAutoExpand);
@@ -162,10 +162,10 @@ export default function ChatMessage({ message }) {
 
     return (
         <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} animate-slideUp`}>
-            <div className={`max-w-3xl ${isUser ? 'order-2' : 'order-1'}`}>
-                <div className={`flex items-start space-x-3 ${isUser ? 'flex-row-reverse space-x-reverse' : ''}`}>
+            <div className={`${compact ? 'max-w-xs' : 'max-w-3xl'} ${isUser ? 'order-2' : 'order-1'}`}>
+                <div className={`flex items-start ${compact ? 'space-x-2' : 'space-x-3'} ${isUser ? 'flex-row-reverse space-x-reverse' : ''}`}>
                     {/* Avatar */}
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm ${isUser
+                    <div className={`${compact ? 'w-6 h-6' : 'w-8 h-8'} rounded-full flex items-center justify-center text-sm ${isUser
                         ? 'bg-blue-600 text-white'
                         : isError
                             ? 'bg-red-100 text-red-600'
@@ -181,13 +181,13 @@ export default function ChatMessage({ message }) {
                     </div>
 
                     {/* Message Content */}
-                    <div className={`flex-1 px-4 py-3 rounded-2xl ${isUser
+                    <div className={`flex-1 ${compact ? 'px-3 py-2' : 'px-4 py-3'} rounded-2xl ${isUser
                         ? 'bg-blue-600 text-white rounded-br-md'
                         : isError
                             ? 'bg-red-50 text-red-800 border border-red-200 rounded-bl-md'
                             : 'bg-white text-gray-800 border border-gray-200 rounded-bl-md shadow-sm'
                         }`}>
-                        <div className="text-sm leading-relaxed">
+                        <div className={`${compact ? 'text-xs' : 'text-sm'} leading-relaxed`}>
                             {isUser ? (
                                 <div className="whitespace-pre-wrap">{message.content}</div>
                             ) : (

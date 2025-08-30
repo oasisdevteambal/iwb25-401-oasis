@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 
-export default function ChatInput({ onSendMessage, disabled }) {
+export default function ChatInput({ onSendMessage, disabled, compact = false }) {
     const [message, setMessage] = useState('');
     const [variable, setVariable] = useState('');
     const [showAdvanced, setShowAdvanced] = useState(false);
@@ -36,9 +36,9 @@ export default function ChatInput({ onSendMessage, disabled }) {
     };
 
     return (
-        <div className="p-4">
+        <div className={`${compact ? 'p-3' : 'p-4'}`}>
             {/* Quick Questions */}
-            {message === '' && (
+            {message === '' && !compact && (
                 <div className="mb-4 animate-fadeIn">
                     <p className="text-sm text-gray-600 mb-2">Quick questions:</p>
                     <div className="flex flex-wrap gap-2">

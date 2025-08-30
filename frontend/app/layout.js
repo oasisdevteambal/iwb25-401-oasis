@@ -1,5 +1,9 @@
 import { Geist, Geist_Mono } from "next/font/google";
+import Link from "next/link";
 import "./globals.css";
+import ConditionalFloatingChatbot from "../components/ConditionalFloatingChatbot";
+import { ChatProvider } from "../context/ChatContext";
+import RefreshResetter from "../components/RefreshResetter";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -22,40 +26,43 @@ export default function RootLayout({ children }) {
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
+        <ChatProvider>
+          {/* Clears session storage and chat on hard refresh only */}
+          <RefreshResetter />
+          <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
           <div className="mx-auto max-w-6xl px-6">
             <div className="flex items-center justify-between h-16">
               {/* Left Side - Logo/Brand */}
               <div className="flex items-center">
-                <a href="/" className="text-lg font-bold text-gray-900 hover:text-blue-600 transition-colors">
+                <Link href="/" className="text-lg font-bold text-gray-900 hover:text-blue-600 transition-colors">
                   Tax Forms
-                </a>
+                </Link>
               </div>
               
               {/* Center - Main Navigation */}
               <nav className="hidden md:flex items-center space-x-8">
-                <a href="/forms" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
+                <Link href="/forms" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
                   Forms
-                </a>
-                <a href="/chat" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
+                </Link>
+                <Link href="/chat" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
                   Chat Assistant
-                </a>
-                <a href="/history" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
+                </Link>
+                <Link href="/history" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
                   History
-                </a>
-                <a href="/admin" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
+                </Link>
+                <Link href="/admin" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
                   Admin
-                </a>
+                </Link>
               </nav>
               
               {/* Right Side - Auth */}
               <div className="flex items-center space-x-4">
-                <a href="/login" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
+                <Link href="/login" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
                   Sign In
-                </a>
-                <a href="/signup" className="btn btn-primary text-sm">
+                </Link>
+                <Link href="/signup" className="btn btn-primary text-sm">
                   Sign Up
-                </a>
+                </Link>
               </div>
               
               {/* Mobile menu button */}
@@ -72,6 +79,9 @@ export default function RootLayout({ children }) {
         
         <main className="min-h-[calc(100vh-64px)]">{children}</main>
         
+        {/* Floating Chatbot - appears on all pages except admin and chat */}
+        <ConditionalFloatingChatbot />
+        
         <footer className="bg-gray-50 border-t border-gray-200">
           <div className="mx-auto max-w-6xl px-6 py-8">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
@@ -84,22 +94,22 @@ export default function RootLayout({ children }) {
               <div>
                 <h4 className="font-medium text-gray-900 mb-3">Forms</h4>
                 <ul className="space-y-2 text-sm text-gray-600">
-                  <li><a href="/forms/income_tax" className="hover:text-blue-600">Income Tax</a></li>
-                  <li><a href="/forms" className="hover:text-blue-600">All Forms</a></li>
+                  <li><Link href="/forms/income_tax" className="hover:text-blue-600">Income Tax</Link></li>
+                  <li><Link href="/forms" className="hover:text-blue-600">All Forms</Link></li>
                 </ul>
               </div>
               <div>
                 <h4 className="font-medium text-gray-900 mb-3">Tools</h4>
                 <ul className="space-y-2 text-sm text-gray-600">
-                  <li><a href="/admin" className="hover:text-blue-600">Document Upload</a></li>
-                  <li><a href="/history" className="hover:text-blue-600">Submission History</a></li>
+                  <li><Link href="/admin" className="hover:text-blue-600">Document Upload</Link></li>
+                  <li><Link href="/history" className="hover:text-blue-600">Submission History</Link></li>
                 </ul>
               </div>
               <div>
                 <h4 className="font-medium text-gray-900 mb-3">Support</h4>
                 <ul className="space-y-2 text-sm text-gray-600">
-                  <li><a href="#" className="hover:text-blue-600">Help Center</a></li>
-                  <li><a href="#" className="hover:text-blue-600">Contact Us</a></li>
+                  <li><Link href="#" className="hover:text-blue-600">Help Center</Link></li>
+                  <li><Link href="#" className="hover:text-blue-600">Contact Us</Link></li>
                 </ul>
               </div>
             </div>
@@ -108,6 +118,7 @@ export default function RootLayout({ children }) {
             </div>
           </div>
         </footer>
+        </ChatProvider>
       </body>
     </html>
   );
