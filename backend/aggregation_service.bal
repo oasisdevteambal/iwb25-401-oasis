@@ -446,9 +446,10 @@ function runLlmIntelligentAggregation(string calcType, string targetDate, record
     string constraints = "UNIVERSAL COMPATIBILITY RULES:\n" +
         "1. CALCULATION ENGINE COMPATIBILITY:\n" +
         "   - Output MUST work with existing tax_calculation_service.bal\n" +
-        "   - All formulas MUST use supported operators: +, -, *, /, parentheses, if-then-else\n" +
+        "   - Formulas MUST use supported constructs: +, -, *, /, parentheses, if-then-else\n" +
+        "   - Additionally allowed helpers (supported by the engine): progressiveTax(var), pct(var)*value, max(...), min(...)\n" +
         "   - Variable names MUST be consistent and calculable\n" +
-        "   - Progressive tax logic MUST use nested if-then-else structure\n" +
+        "   - Progressive tax logic MUST use complete nested if-then-else structure (no ellipsis)\n" +
         "   - Each formula MUST have 'output_field' for variable chaining\n\n" +
         "2. FUTURE-PROOF DOCUMENT HANDLING:\n" +
         "   - NEVER assume document structure or format\n" +
@@ -470,7 +471,8 @@ function runLlmIntelligentAggregation(string calcType, string targetDate, record
         "   - CRITICAL: Create COMPLETE bracket coverage starting from 0 income\n" +
         "   - Merge partial bracket information from multiple documents\n" +
         "   - ALWAYS include first bracket starting at min_income: 0\n" +
-        "   - Handle gaps by inferring reasonable bracket transitions\n" +
+        "   - Brackets must be contiguous and non-overlapping; define explicit lower/upper bounds.\n" +
+        "   - Handle gaps by merging from higher-authority/recency sources; do NOT invent new rates.\n" +
         "   - Support both simple rate brackets AND complex fixed-amount brackets\n" +
         "   - Convert ALL bracket systems to unified if-then-else formulas\n\n" +
         "6. INTELLIGENT CONFLICT RESOLUTION:\n" +
@@ -483,7 +485,7 @@ function runLlmIntelligentAggregation(string calcType, string targetDate, record
         "   - Validate formula chains for mathematical consistency\n" +
         "   - Ensure output is executable by calculation service\n" +
         "   - Preserve source traceability for all extracted data\n" +
-        "   - CRITICAL: Use COMPLETE RULE IDs (ending with _evidence) in source_refs";
+        "   - CRITICAL: Use EXACT RULE IDs from the provided reference list in source_refs (do not modify or add suffixes)";
 
     string domainGuidance = "ADAPTIVE TAX CALCULATION CONTEXT:\n" +
         "Process ANY document type and extract tax-relevant information:\n\n";
@@ -496,7 +498,7 @@ function runLlmIntelligentAggregation(string calcType, string targetDate, record
             "- Handle: Rate-only brackets, fixed-amount brackets, mixed systems\n" +
             "- Ensure: Complete bracket coverage from 0 to maximum income\n" +
             "- Output: Both brackets array AND progressive_tax_logic formula\n" +
-            "- Calculation Service Compatibility: Use if-then-else for progressive logic";
+            "- Calculation Service Compatibility: Use if-then-else for progressive logic (no ellipsis)";
     } else if (calcType == "paye") {
         domainGuidance += "PAYE TAX - Universal Processing:\n" +
             "- Extract: Monthly/annual conversions, progressive brackets, personal relief, tax rates\n" +
@@ -610,7 +612,8 @@ function runLlmIntelligentAggregation(string calcType, string targetDate, record
         "Before submitting your response, verify UNIVERSAL COMPATIBILITY:\n\n" +
         "1. CALCULATION SERVICE COMPATIBILITY CHECK:\n" +
         "   ✓ Can the tax_calculation_service.bal execute all formulas?\n" +
-        "   ✓ Are all formulas using supported operators: +, -, *, /, parentheses, if-then-else?\n" +
+        "   ✓ Are all formulas using supported constructs: +, -, *, /, parentheses, if-then-else?\n" +
+        "   ✓ Helpers allowed: progressiveTax(var), pct(var)*value, max(...), min(...)\n" +
         "   ✓ Is progressive_tax_logic in proper nested if-then-else format?\n" +
         "   ✓ Does each formula have proper 'output_field' for variable chaining?\n" +
         "   ✓ Are variable names consistent and calculable?\n\n" +
@@ -622,16 +625,18 @@ function runLlmIntelligentAggregation(string calcType, string targetDate, record
         "3. FORMULA CHAIN VALIDATION:\n" +
         "   ✓ Are formulas ordered so each step only uses previous results or user inputs?\n" +
         "   ✓ Is the calculation dependency chain logical and complete?\n" +
-        "   ✓ Does each formula's input_dependencies contain only valid previous outputs or user inputs?\n" +
-        "   ✓ Are all intermediate calculations included in the formula chain?\n\n" +
+    "   ✓ Does each formula's input_dependencies contain only valid previous outputs or user inputs?\n" +
+    "   ✓ Are all intermediate calculations included in the formula chain?\n" +
+    "   ✓ Do not use ellipsis (no '...'); provide complete executable expressions only.\n\n" +
         "4. BRACKET SYSTEM VALIDATION:\n" +
         "   ✓ Does bracket coverage start from 0 income (no gaps at the beginning)?\n" +
         "   ✓ Is there complete coverage with no income ranges left uncovered?\n" +
         "   ✓ Are brackets properly ordered by bracket_order?\n" +
         "   ✓ Does progressive_tax_logic match the brackets array structure?\n" +
-        "   ✓ Are both rate_percent AND rate_fraction provided for compatibility?\n\n" +
+    "   ✓ Are both rate_percent AND rate_fraction provided for compatibility?\n" +
+    "   ✓ Bracket bounds must be contiguous and non-overlapping; define explicit lower/upper bounds.\n\n" +
         "5. SOURCE INTEGRITY VALIDATION:\n" +
-        "   ✓ Do all source_refs use complete rule IDs with _evidence suffix?\n" +
+    "   ✓ Do all source_refs use the exact rule IDs from the provided reference list?\n" +
         "   ✓ Is all data traceable to provided documents (no external assumptions)?\n" +
         "   ✓ Are conflicts properly resolved and documented?\n\n" +
         "6. FUTURE-PROOF VALIDATION:\n" +
@@ -646,14 +651,15 @@ function runLlmIntelligentAggregation(string calcType, string targetDate, record
         "✓ Brackets: Start from 0, complete coverage, proper if-then-else logic\n" +
         "✓ Compatibility: Works with tax_calculation_service.bal operators\n" +
         "✗ Do NOT ask user for: annual_gross, taxable_income, tax_rate, tax_amount\n\n" +
-        "FORMULA COMPATIBILITY EXAMPLES:\n" +
-        "✓ GOOD: if (taxable_income <= 150000) then 0 else if (taxable_income <= 233333) then (taxable_income * 0.06) - 9000 else...\n" +
+    "FORMULA COMPATIBILITY EXAMPLES:\n" +
+    "✓ GOOD: if (taxable_income <= 150000) then 0 else if (taxable_income <= 233333) then (taxable_income * 0.06) - 9000 else if (taxable_income <= 275000) then (taxable_income * 0.18) - 37000 else (taxable_income * 0.24) - 53000\n" +
         "✓ GOOD: 12 * monthly_regular_profits_from_employment\n" +
         "✓ GOOD: annual_gross - personal_relief\n" +
-        "✗ BAD: complex functions, external references, unsupported operators\n\n" +
-        "MISSING BRACKET HANDLING:\n" +
-        "If documents show partial brackets (e.g., 150K-233K), ALWAYS infer complete coverage:\n" +
-        "✓ Add 0-150K bracket with appropriate rate (usually 0% or lowest rate)\n" +
+    "✓ GOOD (helpers): progressiveTax(taxable_income), pct(rate_var) * base_var, max(a, b), min(a, b)\n" +
+    "✗ BAD: undefined functions, external references, unsupported operators\n\n" +
+    "MISSING BRACKET HANDLING:\n" +
+    "If documents show partial brackets (e.g., 150K-233K), ALWAYS infer complete coverage:\n" +
+    "✓ Add 0-150K bracket (min_income: 0) using only rates present in the provided sources; do NOT fabricate new rates. If a rate is not stated, set rate_percent and rate_fraction to null and document in consolidation_notes.\n" +
         "✓ Ensure seamless transitions between all brackets\n" +
         "✓ Document inference decisions in consolidation_notes";
 
@@ -661,7 +667,8 @@ function runLlmIntelligentAggregation(string calcType, string targetDate, record
                         conflictAnalysis + "\n\nDETECTED CONFLICTS:\n" + conflictDetails +
                         "\n\nRULES TO AGGREGATE:\n" + rulesSummary +
                         "\n\nOUTPUT SCHEMA:\n" + outputSchema + validationInstructions +
-                        "\n\nReturn the consolidated rule in the specified JSON format.";
+                        "\n\nIMPORTANT OUTPUT DIRECTIVE:\n" +
+                        "Return ONLY a single valid JSON object that matches the output schema. Do not include markdown fences, explanations, or extra text. Ensure bracket continuity without inventing new rates; use rates from provided sources when merging. If a detail cannot be determined from the sources, resolve via documented conflict strategy and add a note to consolidation_notes.";
 
     // Call Gemini LLM for intelligent aggregation
     json|error llmResult = callGeminiForAggregation(fullPrompt, calcType);
@@ -706,7 +713,7 @@ function buildRulesSummaryForLlm(record {string id; string title; string descrip
     foreach var rule in rules {
         summary += "- " + rule.id + " (Authority: " + rule.source_rank.toString() + ")\n";
     }
-    summary += "\nCRITICAL: Use RULE IDs with _evidence suffix, NOT document IDs!\n\n";
+    summary += "\nCRITICAL: Use the EXACT RULE IDs listed above in source_refs (do not add/remove suffixes).\n\n";
 
     summary += "COMPREHENSIVE DOCUMENT ANALYSIS:\n";
     int ruleIndex = 1;
@@ -886,7 +893,7 @@ function buildAggregationOutputSchema() returns string {
             "    \"maximum\"?: number,\n" +
             "    \"unit\"?: string,\n" +
             "    \"is_calculated\"?: boolean, // true for derived fields, false/undefined for user inputs\n" +
-            "    \"source_refs\": [{\"ruleId\": \"FULL_RULE_ID_WITH_EVIDENCE_SUFFIX\", \"fieldName\": string}]\n" +
+            "    \"source_refs\": [{\"ruleId\": \"EXACT_RULE_ID_FROM_LIST\", \"fieldName\": string}]\n" +
             "  }},\n" +
             "  \"ui_order\": [string], // Order for user input fields only (not calculated fields)\n" +
             "  \"brackets\": [{ // REQUIRED: Complete bracket structure starting from 0\n" +
@@ -896,16 +903,16 @@ function buildAggregationOutputSchema() returns string {
             "    \"rate_fraction\": number, // As decimal (e.g., 0.06 for 6%)\n" +
             "    \"fixed_amount\": number?, // Fixed deduction amount (0 if none)\n" +
             "    \"bracket_order\": number, // Sequential order starting from 1\n" +
-            "    \"source_refs\": [{\"ruleId\": \"FULL_RULE_ID_WITH_EVIDENCE_SUFFIX\", \"bracketId\": string}]\n" +
+            "    \"source_refs\": [{\"ruleId\": \"EXACT_RULE_ID_FROM_LIST\", \"bracketId\": string}]\n" +
             "  }],\n" +
             "  \"formulas\": [{ // Calculation chain in dependency order\n" +
             "    \"id\": string, // Unique formula identifier\n" +
             "    \"name\": string, // Human-readable name\n" +
-            "    \"expression\": string, // MUST use: +, -, *, /, parentheses, if-then-else only\n" +
+            "    \"expression\": string, // MUST use: +, -, *, /, parentheses, if-then-else only; helpers allowed: progressiveTax(), pct(), max(), min()\n" +
             "    \"order\": number, // Calculation sequence order (1, 2, 3...)\n" +
             "    \"output_field\": string, // REQUIRED: What variable this formula creates\n" +
             "    \"input_dependencies\": [string], // What inputs this formula needs\n" +
-            "    \"source_refs\": [{\"ruleId\": \"FULL_RULE_ID_WITH_EVIDENCE_SUFFIX\", \"formulaId\": string}],\n" +
+            "    \"source_refs\": [{\"ruleId\": \"EXACT_RULE_ID_FROM_LIST\", \"formulaId\": string}],\n" +
             "    \"testVectors\": [{ // Validation examples\n" +
             "      \"inputs\": { [var: string]: number|string },\n" +
             "      \"expectedResult\": number,\n" +
@@ -928,7 +935,7 @@ function buildAggregationOutputSchema() returns string {
             "}\n\n" +
             "CRITICAL COMPATIBILITY REQUIREMENTS:\n" +
             "1. CALCULATION SERVICE INTEGRATION:\n" +
-            "   - All expressions MUST use ONLY: +, -, *, /, parentheses, if-then-else\n" +
+            "   - All expressions MUST use ONLY: +, -, *, /, parentheses, if-then-else; helpers allowed: progressiveTax(), pct(), max(), min()\n" +
             "   - Variable names MUST be consistent and reference-able\n" +
             "   - Progressive tax logic MUST be complete nested if-then-else\n" +
             "   - Each formula MUST have 'output_field' for variable chaining\n\n" +
@@ -936,7 +943,7 @@ function buildAggregationOutputSchema() returns string {
             "   - ALWAYS include 'brackets' array with complete structure\n" +
             "   - MUST start from min_income: 0 (even if documents don't show it)\n" +
             "   - Include both rate_percent (6) and rate_fraction (0.06)\n" +
-            "   - Ensure complete coverage with no income gaps\n\n" +
+            "   - Ensure complete coverage with no income gaps; bounds must be contiguous and non-overlapping\n\n" +
             "3. FORMULA CHAIN REQUIREMENTS:\n" +
             "   - Order formulas by dependency: user inputs → intermediates → final result\n" +
             "   - Each formula's output_field becomes available for subsequent formulas\n" +
@@ -973,8 +980,8 @@ function buildAggregationOutputSchema() returns string {
             "✗ INCOMPLETE: 150K-233K, 275K+ (missing 0-150K and 233K-275K)\n" +
             "\n" +
             "SOURCE REFERENCE VALIDATION:\n" +
-            "✓ CORRECT: \"doc_temp_paye_doc_1756553224_paye_evidence\"\n" +
-            "✗ INCORRECT: \"doc_temp_paye_doc_1756553224\" (missing _evidence suffix)\n" +
+            "✓ CORRECT: Use exactly the RULE IDs provided in the reference list above.\n" +
+            "✗ INCORRECT: Altering IDs (adding/removing suffixes) or using unrelated document IDs.\n" +
             "\n" +
             "FUTURE-PROOF GUIDELINES:\n" +
             "- Structure output to work with ANY future document format\n" +
